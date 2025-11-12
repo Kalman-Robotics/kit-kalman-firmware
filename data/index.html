@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <link rel="icon" href="/favicon.png">
+<style>
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: Arial, Helvetica, sans-serif; 
+}
+
+.topnav { 
+  overflow: hidden; 
+  background-color: #034078;
+}
+
+h1 {
+  font-size: 1.8rem; 
+  color: white;
+  padding: 2px 20px;
+}
+
+input[type=text], input[type=number], input[type=password], select, textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.sub_input {
+  width:50%;
+}
+
+label {
+  padding: 12px 12px 12px 0;
+  display: inline-block;
+}
+
+.clickable {
+  cursor:pointer;
+  color:blue;
+}
+
+.clickable:hover {
+  cursor:hand;  
+  color:#0096FF;
+  text-decoration:underline;
+}
+
+input[type=submit], input[type=reset], button {
+  color: #FEFCFB;
+  background-color: #034078;
+  text-align: center;
+  font-size: 16px;
+  margin: 0px 10px 10px 0px;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+input[type=submit]:hover, button:hover {
+  background-color: #45a049;
+}
+
+button:disabled, button[disabled] {
+  border: 1px solid #999999;
+  background-color: #cccccc;
+  color: #666666;
+}
+.container {
+  border-radius: 5px;
+  background-color: #f2f2f2;
+  padding: 20px;
+}
+
+.col-25 {
+  float: left;
+  width: 25%;
+  margin-top: 6px;
+}
+
+.col-75 {
+  float: left;
+  width: 75%;
+  margin-top: 6px;
+}
+
+/* Clear floats after the columns */
+.row::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* Responsive layout - when the screen is less than 600px wide, make the two columns stack on top of each other instead of next to each other */
+@media screen and (max-width: 600px) {
+  .col-25, .col-75, input[type=submit] {
+    width: 100%;
+    margin-top: 0;
+  }
+}
+</style>
+  <title>Kaia.ai Robot Configurator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+const NETWORK_YAML = "/network.yaml";
+fetch(NETWORK_YAML)
+  .then(function(response) {
+    if (!response.ok) {
+      console.log(NETWORK_YAML + ' not found');
+	} else {
+      response.text().then(function(text) {
+        text = text.replace(/\r\n/g, '\n');
+        var lines = text.split('\n');
+		//console.log(lines);
+        for (var idx = 0; idx < lines.length-1;) {
+          a = lines[idx++].split(': ');
+          //console.log(`${a}`);
+          key = a.shift();
+          if (key.length > 0) {
+            val = a.join(': ');
+            //console.log(`${key}: ${val}`);
+            document.getElementById(key).value = val;
+		  }
+        }
+      });
+	}
+  })
+  .catch((error) => {
+    console.log('Exception fetching ' + NETWORK_YAML);
+  });
+</script>
+<script>
+  function show(id, enable) {
+	var x = document.getElementById(id);
+    //console.log(id, enable, x.style.display);
+	if (enable && x.style.display === "none") {
+      x.style.display = "";
+	} else {
+	  if (!enable && x.style.display !== "none") {
+        x.style.display = "none";
+	  }
+    }
+  }
+  function showToggle(id) {
+	var x = document.getElementById(id);
+    //console.log(id, enable, x.style.display);
+	if (x.style.display === "none") {
+      x.style.display = "";
+	  return false;
+	} else {
+	  if (x.style.display !== "none") {
+        x.style.display = "none";
+		return true;
+	  }
+    }
+  }
+  function toggleAdvancedNetworkProps() {
+    var is_visible = showToggle('network_advanced_div');
+	var x = document.getElementById('dest_ip_label');
+	if (is_visible) {
+	  x.innerHTML = "Local PC IPv4 &#9205";
+	} else {
+	  x.innerHTML = "Local PC IPv4 &#9207";
+	}
+  }
+  </script>
+</head>
+<body>
+  <div class="topnav">
+    <h1>Kaia.ai Robot Configurator</h1>
+  </div>
+  <div class="container">
+    <form action="/" method="POST">
+      <fieldset>
+	  <legend>Network</legend>
+	  <div class="row">
+	    <div class="col-25">
+          <label for="ssid">SSID 2.4GHz</label>
+		</div>
+		<div class="col-75">
+          <input type="text" id="ssid" name="ssid" minlength="1" maxlength="32" placeholder="my_2.4GHz_wifi" required title="Name of WiFi network for the robot to connect to. The local PC that runs ROS2, micro-ROS and Kaia.ai must be connected to this WiFi as well.">
+        </div>
+      </div>
+
+	  <div class="row">
+	    <div class="col-25">
+          <label for="pass">WiFi Password</label>
+		</div>
+		<div class="col-75">
+          <div class="sub_input">
+          <input type="password" id="pass" name="pass" title="WiFi network password">
+          </div>
+        </div>
+      </div>
+
+	  <div class="row">
+	    <div class="col-25">
+          <label for="dest_ip" class="clickable" id="dest_ip_label" onclick="toggleAdvancedNetworkProps()">Local PC IPv4 &#9205;</label>
+		</div>
+		<div class="col-75">
+          <div class="sub_input">
+          <input type="text" minlength="7" maxlength="15" size="15"
+            pattern="^((\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.){3}(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])$"
+            id="dest_ip" name="dest_ip" placeholder="192.168.1.200" required autocomplete="on" title="IP of your local PC that is running Micro-ROS and ROS2">
+          </div>
+        </div>
+      </div>
+
+      <div id="network_advanced_div" style="display:none">
+	  <div class="row">
+	    <div class="col-25">
+          <label for="dest_port">Local PC Port</label>
+		</div>
+		<div class="col-75">
+          <div class="sub_input">
+          <input type="number" id="dest_port" min="0" max="65535" name="dest_port" value="8888" required inputmode="numeric" title="Network port used by Micro-ROS on your local PC that is running ROS2">
+          </div>
+        </div>
+      </div>
+      </div>
+      </fieldset>
+	  <br>
+      <div class="row">
+	    <div class="col-25">
+          <input type="reset" id="reset" value="Clear">
+		</div>
+		<div class="col-75">
+          <input type="submit" value="Connect">
+		</div>
+      </div>
+    </form>
+  </div>
+</body>
+</html>
