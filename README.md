@@ -1,7 +1,7 @@
-# NOMBRE
+# Kit-Kalman-Firmware
 Este repositorio contiene el Firmware del robot
 
-- [NOMBRE](#nombre)
+- [Kit-Kalman-Firmware](#kit-kalman-firmware)
   - [Pasos probados en Ubuntu 22.04:](#pasos-probados-en-ubuntu-2204)
     - [1. Clonar el repositorio](#1-clonar-el-repositorio)
     - [2. Instalar la extensión de PlatformIO en VSCode](#2-instalar-la-extensión-de-platformio-en-vscode)
