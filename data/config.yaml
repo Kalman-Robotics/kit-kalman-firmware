@@ -4,11 +4,11 @@
 board:
   manufacturer: kalmanrobotics.io
   model: KALMAN ESP32-S3-DevKitC-1
-  version: v1.1
+  version: v1.2
 lidar:
   gpio:
-    tx: 17
-    rx: 18
+    tx: 37 # PCB RX -> LD19 TX
+    rx: 17 # not used for LD19
 led:
   system: 
     driver:
@@ -62,24 +62,25 @@ adc:
 # Peripherals configuration
 #
 lidar:
-  model: LDROBOT LD14P
-# model: NEATO XV11
-# model: SLAMTEC RPLIDAR A1
-# model: XIAOMI LDS02RR
-# model: YDLIDAR SCL
-# model: YDLIDAR X2
-# model: YDLIDAR X2L
-# model: YDLIDAR X3
-# model: YDLIDAR X3 PRO
-# model: 3IROBOTIX DELTA-2G
-# model: 3IROBOTIX DELTA-2A 115200
-# model: 3IROBOTIX DELTA-2A
-# model: 3IROBOTIX DELTA-2B
-# model: YDLIDAR X4 PRO
-# model: YDLIDAR X4
+  model: LDROBOT LD19
+  # model: LDROBOT LD14P
+  # model: NEATO XV11
+  # model: SLAMTEC RPLIDAR A1
+  # model: XIAOMI LDS02RR
+  # model: YDLIDAR SCL
+  # model: YDLIDAR X2
+  # model: YDLIDAR X2L
+  # model: YDLIDAR X3
+  # model: YDLIDAR X3 PRO
+  # model: 3IROBOTIX DELTA-2G
+  # model: 3IROBOTIX DELTA-2A 115200
+  # model: 3IROBOTIX DELTA-2A
+  # model: 3IROBOTIX DELTA-2B
+  # model: YDLIDAR X4 PRO
+  # model: YDLIDAR X4
   scan:
     freq:
-      target: 5.0
+      target: 10.0
 monitor:
   baud: 115200
 base:
