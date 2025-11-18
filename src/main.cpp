@@ -622,7 +622,7 @@ void setup() {
     launch_web_config = true;
   }
 
-  Serial.println("To enter web config push-and-release EN, "
+  Serial.println("To enter web config push-and-release RST, "
     "then push-and-hold BOOT within 1 sec");
   delay(1000);
   launch_web_config |= isBootButtonPressed(cfg.RESET_SETTINGS_HOLD_SEC);

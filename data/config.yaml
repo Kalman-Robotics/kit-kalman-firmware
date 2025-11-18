@@ -23,8 +23,8 @@ led:
 button:
   boot:
     gpio: 0
-#   invert: true
-    invert: false
+    invert: true
+    # invert: false
 # BOOT is stuck LOW when using USB serial
 monitor:
   gpio:
