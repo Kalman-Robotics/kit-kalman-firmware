@@ -61,12 +61,12 @@ public:
   static const uint16_t LIDAR_BUF_LEN = 400;
   static const uint16_t LIDAR_SERIAL_RX_BUF_LEN = 1024;
   static const uint32_t WIFI_CONN_TIMEOUT_MS = 30000;
-  static constexpr char * SSID_AP = (char *) "KAIA.AI";
+  // static constexpr char * SSID_AP = (char *)"robot.web"; //it'll be dynamic now
   static const uint32_t MONITOR_BAUD = 115200;
   static const uint8_t UNDEFINED_GPIO = 255;
 
   // Micro-ROS config
-  static constexpr char * UROS_NODE_NAME = (char *)"pet"; // temp hardcoded
+  // static constexpr char * UROS_NODE_NAME = (char *)"robot.name"; //it'll be dynamic now
   static constexpr char * UROS_TELEM_TOPIC_NAME = (char *)"telemetry";
   static constexpr char * UROS_LOG_TOPIC_NAME = (char *)"rosout";
   //static constexpr char * UROS_DIAG_TOPIC_NAME = (char *)"diagnostics";
@@ -112,6 +112,8 @@ public:
   String board_manufacturer = "N/A";
   String board_model = "N/A";
   String board_version = "N/A";
+  String robot_name = "N/A";
+  String robot_web = "N/A";  
   unsigned int dest_port = 8888;
   float base_wheel_dia = 0.043f;
   float base_wheel_accel_max = 1.0;
@@ -289,6 +291,14 @@ public:
         board_model = trimString(pvalue);
       else if (lname[1] == "version")
         board_version = trimString(pvalue);
+      return;
+    }
+
+    if (nlevels == 2 && lname[0] == "robot") {
+      if (lname[1] == "name")
+        robot_name = trimString(pvalue);
+      else if (lname[1] == "web")
+        robot_web = trimString(pvalue);
       return;
     }
 

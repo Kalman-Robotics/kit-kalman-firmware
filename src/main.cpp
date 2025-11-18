@@ -631,7 +631,7 @@ void setup() {
     digiWrite(cfg.led_sys_gpio, HIGH, cfg.led_sys_invert);
 
     AP ap;
-    ap.obtainConfig(cfg.SSID_AP, set_param_callback);
+    ap.obtainConfig(cfg.robot_web.c_str(), set_param_callback);
     return;
   }
 
@@ -641,6 +641,10 @@ void setup() {
   Serial.print(cfg.board_version);
   Serial.print(", manufacturer ");
   Serial.println(cfg.board_manufacturer);
+  Serial.print("Robot name ");
+  Serial.print(cfg.robot_name);
+  Serial.print(", web ");
+  Serial.println(cfg.robot_web);  
   cfg.board_manufacturer = ""; // free up a little memory
   cfg.board_model = "";
   cfg.board_version = "";
@@ -668,10 +672,11 @@ void setup() {
   ros_config_params_changed = true;
   updateROSParams();
   Serial.println("Micro-ROS initialized");
-
+  cfg.robot_name = ""; // free up a little memory
+  cfg.robot_web = ""; 
   //Serial.print("Diagnostics pub ");
   //Serial.println(pubDiagnostics() ? "OK" : "FAILED");
-//  pubDiagnostics();
+  //pubDiagnostics();
   
   resetTelemMsg();
   

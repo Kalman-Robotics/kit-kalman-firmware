@@ -36,9 +36,9 @@ public:
   
     // Connect to Wi-Fi network with SSID and password
     Serial.print("Setting up WiFi ");
-    Serial.print(SSID_AP);
+    Serial.print(cfg.robot_web.c_str());
     // NULL sets an open Access Point
-    WiFi.softAP(SSID_AP);
+    WiFi.softAP(cfg.robot_web.c_str());
   
     IPAddress IP = WiFi.softAPIP();
     Serial.print("; browse to http://");

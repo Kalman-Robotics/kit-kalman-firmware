@@ -1,6 +1,9 @@
 #
 # Board-specific assignments
 #
+robot:
+  name: kalmanbot_0
+  web: KALMANBOT_0.AI
 board:
   manufacturer: kalmanrobotics.io
   model: KALMAN ESP32-S3-DevKitC-1

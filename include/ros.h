@@ -235,10 +235,11 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   printCurrentTime();
 
   // https://micro.ros.org/docs/tutorials/programming_rcl_rclc/node/
-  rc = rclc_node_init_default(&node, CONFIG::UROS_NODE_NAME, "", &support);
+  // rc = rclc_node_init_default(&node, CONFIG::UROS_NODE_NAME, "", &support);
+  rc = rclc_node_init_default(&node, cfg.robot_name.c_str(), "", &support);
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_node_init_default(");
-    Serial.print(CONFIG::UROS_NODE_NAME);
+    Serial.println(cfg.robot_name.c_str());
     Serial.print(") error ");
     Serial.println(rc);
     return rc;
@@ -247,7 +248,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   Serial.print("micro-ROS client key 0x");
   Serial.print(client_key, HEX);
   Serial.print("; ROS2 node /");
-  Serial.println(cfg.UROS_NODE_NAME);
+  Serial.println(cfg.robot_name.c_str());
 
   rc = rclc_subscription_init_default(&twist_sub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), cfg.UROS_CMD_VEL_TOPIC_NAME);
@@ -504,7 +505,8 @@ void logMsg(char* msg, uint8_t severity_level) {
     msgLog.stamp.nanosec = tv.tv_nsec;
     
     msgLog.level = severity_level;
-    msgLog.name.data = cfg.UROS_NODE_NAME;
+    static String node_name = cfg.robot_name;
+    msgLog.name.data = (char*)node_name.c_str();
     msgLog.name.size = strlen(msgLog.name.data);
     msgLog.msg.data = msg;
     msgLog.msg.size = strlen(msgLog.msg.data);
