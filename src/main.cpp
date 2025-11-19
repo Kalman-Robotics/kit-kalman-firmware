@@ -612,20 +612,48 @@ void setup() {
 
   bool launch_web_config = false;
 
-  if (cfg.ssid.length() == 0) {
-    Serial.println("WiFi SSID unknown");
-    launch_web_config = true;
+  if (cfg.use_web) {
+    Serial.println("Web configuration mode enabled (robot.use_web: true)");    
+    // Load network.yaml if it exists (for backward compatibility)
+    if (wifi_yaml_exists && wifi_yaml_err.length() == 0) {
+      Serial.println("Using WiFi credentials from network.yaml");
+    } else {
+      if (cfg.ssid.length() == 0) {
+        Serial.println("WiFi SSID unknown");
+        launch_web_config = true;
+      }
+      if (cfg.dest_ip.length() == 0) {
+        Serial.println("dest_ip unknown");
+        launch_web_config = true;
+      }
+    }
+    Serial.println("To enter web config push-and-release RST, "
+      "then push-and-hold BOOT within 1 sec");
+    delay(1000);
+    launch_web_config |= isBootButtonPressed(cfg.RESET_SETTINGS_HOLD_SEC);
+  } 
+  else {
+    // NEW: Direct configuration mode - bypass web config
+    Serial.println("Web configuration disabled (robot.use_web: false)");
+    Serial.println("Using WiFi and micro-ROS settings from config.yaml");    
+    if (cfg.ssid.length() == 0) {
+      Serial.println("ERROR: WiFi SSID not configured in config.yaml");
+      Serial.println("Please set robot.wifi.ssid in config.yaml");
+      idle();
+    }
+    if (cfg.dest_ip.length() == 0) {
+      Serial.println("ERROR: micro-ROS agent IP not configured in config.yaml");
+      Serial.println("Please set robot.computer.ip in config.yaml");
+      idle();
+    }
+    Serial.print("WiFi SSID: ");
+    Serial.println(cfg.ssid);
+    Serial.print("micro-ROS agent: ");
+    Serial.print(cfg.dest_ip);
+    Serial.print(":");
+    Serial.println(cfg.dest_port);    
+    launch_web_config = false; // Force bypass web config
   }
-
-  if (cfg.dest_ip.length() == 0) {
-    Serial.println("dest_ip unknown");
-    launch_web_config = true;
-  }
-
-  Serial.println("To enter web config push-and-release RST, "
-    "then push-and-hold BOOT within 1 sec");
-  delay(1000);
-  launch_web_config |= isBootButtonPressed(cfg.RESET_SETTINGS_HOLD_SEC);
 
   if (launch_web_config) {
     digiWrite(cfg.led_sys_gpio, HIGH, cfg.led_sys_invert);

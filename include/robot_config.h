@@ -113,7 +113,8 @@ public:
   String board_model = "N/A";
   String board_version = "N/A";
   String robot_name = "N/A";
-  String robot_web = "N/A";  
+  String robot_web = "N/A";
+  bool use_web = true;
   unsigned int dest_port = 8888;
   float base_wheel_dia = 0.043f;
   float base_wheel_accel_max = 1.0;
@@ -299,6 +300,24 @@ public:
         robot_name = trimString(pvalue);
       else if (lname[1] == "web")
         robot_web = trimString(pvalue);
+      else if (lname[1] == "use_web")
+        use_web = stringToBool(pvalue);
+      return;
+    }
+
+    if (nlevels == 3 && lname[0] == "robot" && lname[1] == "wifi") {
+      if (lname[2] == "ssid")
+        ssid = trimString(pvalue);
+      else if (lname[2] == "password")
+        pass = trimString(pvalue);
+      return;
+    }
+
+    if (nlevels == 3 && lname[0] == "robot" && lname[1] == "computer") {
+      if (lname[2] == "ip")
+        dest_ip = trimString(pvalue);
+      else if (lname[2] == "port")
+        dest_port = (unsigned int) pvalue.toInt();
       return;
     }
 
