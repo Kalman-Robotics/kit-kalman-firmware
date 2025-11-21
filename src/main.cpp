@@ -25,9 +25,11 @@
 #include "lidar.h"
 #include "ros.h"
 #include "adc.h"
+#include "IMU6500.h"
 #include <SPIFFS.h>
 
 CONFIG cfg;
+IMU6500 imu;
 kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
@@ -35,6 +37,7 @@ uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 unsigned long telem_prev_pub_time_us = 0;
 unsigned long ping_prev_pub_time_us = 0;
 unsigned long ros_params_update_prev_time_us = 0;
+unsigned long imu_last_pub_us = 0;
 
 unsigned long ramp_duration_us = 0;
 unsigned long ramp_start_time_us = 0;
@@ -57,6 +60,7 @@ void publishTelem(unsigned long step_time_us);
 void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right, float joint_pos_delta_left);
 void spinTelem(bool force_pub);
 void spinPing();
+void spinIMU(unsigned long time_now_us);
 void updateROSParams();
 void setMotorSpeeds(float rpm_left, float rpm_right);
 bool isBootButtonPressed(uint8_t sec);
@@ -456,7 +460,8 @@ void loop() {
   }
 
   updateROSParams();
-
+  unsigned long time_now_us = esp_timer_get_time();
+  spinIMU(time_now_us);
   spinTelem(false);
   spinPing();
 
@@ -512,7 +517,27 @@ void resetTelemMsg() {
   telem_msg.battery_mv = 0;
   telem_msg.wifi_rssi_dbm = 0;
 }
+void spinIMU(unsigned long time_now_us) {
+  if ((time_now_us - imu_last_pub_us) < 10000)  // 10ms = 100Hz
+    return;
 
+  imu.read();
+  imu_msg.accel_x = imu.getAccelX();
+  imu_msg.accel_y = imu.getAccelY();
+  imu_msg.accel_z = imu.getAccelZ();
+  imu_msg.gyro_x = imu.getGyroX();
+  imu_msg.gyro_y = imu.getGyroY();
+  imu_msg.gyro_z = imu.getGyroZ();
+
+  rcl_ret_t rc = rcl_publish(&imu_pub, &imu_msg, NULL);
+  if (rc != RCL_RET_OK) {
+    Serial.print("rcl_publish(imu_msg");
+    Serial.print(") error ");
+    Serial.println(rc);
+  }
+
+  imu_last_pub_us = time_now_us;
+}
 /*
 void blink_error_code(int n_blinks) {
   unsigned int i = 0;
@@ -680,6 +705,14 @@ void setup() {
   setupLIDAR();
   setupADC();
   setupMotors();
+
+  // Initialize IMU
+  if (!imu.begin(48, 47, 400000)) {
+    Serial.println("Error initializing IMU6500");
+  } else {
+    Serial.println("IMU6500 initialized successfully");
+  }
+
 
   while(!initWiFi(cfg.ssid, cfg.pass));
 

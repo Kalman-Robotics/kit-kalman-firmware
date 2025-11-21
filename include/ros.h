@@ -22,6 +22,7 @@
 #include <rclc_parameter/rclc_parameter.h>
 //#include <rmw_microros/discovery.h>
 #include <kalman_interfaces/msg/kaiaai_telemetry2.h>
+#include <kalman_interfaces/msg/imu_data.h>
 #include <geometry_msgs/msg/twist.h>
 //#include <diagnostic_msgs/msg/diagnostic_array.h>
 #include <rcl_interfaces/msg/log.h>
@@ -30,6 +31,7 @@
 #include "lds_all_models.h"
 #include "motors.h"
 #include "esp_mac.h"
+#include <kalman_interfaces/msg/imu_data.h>
 
 extern MotorController motorLeft, motorRight;
 extern CONFIG cfg;
@@ -39,10 +41,12 @@ bool suppress_param_log_print = false;
 
 rcl_publisher_t telem_pub;
 rcl_publisher_t log_pub;
+rcl_publisher_t imu_pub;
 //rcl_publisher_t diag_pub;
 rcl_subscription_t twist_sub;
 kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
 geometry_msgs__msg__Twist twist_msg;
+kalman_interfaces__msg__ImuData imu_msg;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rclc_executor_t executor;
@@ -275,6 +279,15 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_publisher_init_best_effort(");
     Serial.print(cfg.UROS_LOG_TOPIC_NAME);
+    Serial.print(") error ");
+    Serial.println(rc);
+    return rc;
+  }
+  rc = rclc_publisher_init_best_effort(&imu_pub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, ImuData), "/imu_telem");
+  if (rc != RCL_RET_OK) {
+    Serial.print("rclc_publisher_init_best_effort(");
+    Serial.print("/imu_telem");
     Serial.print(") error ");
     Serial.println(rc);
     return rc;
