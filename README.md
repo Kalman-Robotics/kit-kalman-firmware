@@ -1,111 +1,97 @@
-# Kit-Kalman-Firmware
+# Kit-Kalman Firmware
 
-Este repositorio contiene el firmware del robot Kit-Kalman, basado en ESP32 y compatible con micro-ROS.
+Firmware para ESP32-S3 con micro-ROS y WiFi.
 
-## Características principales
+## Requisitos
 
-- **Plataforma**: ESP32 (compatible con ESP32-DevKitC)
-- **Framework**: Arduino + micro-ROS
-- **Conectividad**: WiFi (2.4 GHz) y Serial
-- **Interfaz web**: Configuración y monitoreo vía navegador
-- **Integración ROS2**: Comunicación mediante micro-ROS agent
-- **Sistema de archivos**: SPIFFS para almacenar configuraciones y archivos web
+### Software
+1. **Python 3.x** - [Descargar](https://www.python.org/downloads/)
+2. **VS Code** - [Descargar](https://code.visualstudio.com/)
 
-## Requisitos previos (Windows)
+### Drivers USB (instalar según tu chip)
+- [CP210x](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers) (Silicon Labs)
+- [CH340](https://sparks.gogo.co.nz/ch340.html)
 
-1. **Instalar PlatformIO**
-   - Descarga e instala [Visual Studio Code](https://code.visualstudio.com/)
-   - Instala la extensión PlatformIO desde el marketplace de VS Code
+---
 
-2. **Drivers USB**
-   - [CP210x USB to UART Bridge](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
-   - [CH340 Driver](https://sparks.gogo.co.nz/ch340.html)
+## Instalación
 
-3. **Identificar puerto COM**
-   - Abre el Administrador de dispositivos
-   - Busca en "Puertos (COM y LPT)"
-   - Anota el número de puerto (ej: COM3)
-
-## Instalación y uso
-
-### 1. Descargar el firmware
+### 1. Clonar repositorio
 ```cmd
 cd C:\kalman
 git clone -b web-name https://github.com/kalman-robotics/kit-kalman-firmware.git firmware
-cd C:\kalman\firmware\lib
+cd firmware\lib
 git clone https://github.com/Kalman-Robotics/micro_ros_kalman
-cd C:\kalman\firmware
-code ./
+cd ..
 ```
 
-### 2. Configurar archivo config.yaml (ANTES de subir)
-
-**IMPORTANTE**: ESP32 y computadora deben estar en la misma red WiFi.
-
-```
-┌─────────────┐          ┌─────────────┐
-│   ESP32     │          │ Computadora │
-│  (Robot)    │  ◄────►  │  (Docker)   │
-└─────────────┘          └─────────────┘
-       │                        │
-       └────────┬───────────────┘
-                │
-         ┌──────▼──────┐
-         │   Router    │
-         │    WiFi     │
-         └─────────────┘
-```
-
-**Paso 2.1: Obtener la IP de tu computadora**
+### 2. Instalar PlatformIO
 ```cmd
-ipconfig
+pip install platformio
 ```
-Busca la IP en "Adaptador de LAN inalámbrica Wi-Fi" → "Dirección IPv4"
-Ejemplo: `192.168.1.100`
 
-**Paso 2.2: Editar `data/config.yaml`**
+Reinicia tu terminal después de instalar.
 
-Cada robot tiene un número de serie. Si es K-01, usar `kalmanbot_01`
+### 3. Configurar WiFi
+
+Edita `data/config.yaml`:
 
 ```yaml
 robot:
-  name: kalmanbot_01        # Número de serie del robot
+  name: kalmanbot_01        # Cambiar según número de serie (K-01 → kalmanbot_01)
   web: KALMANBOT_01.AI
   use_web: false
   wifi:
-    ssid: MiRedWiFi         # Nombre de tu red WiFi
-    password: 123456789     # Contraseña de tu WiFi
+    ssid: TU_WIFI           # Nombre de tu red WiFi
+    password: TU_PASSWORD   # Contraseña WiFi
   computer:
-    ip: 192.168.1.100       # IP de tu computadora (del paso 2.1)
-    port: 8888              # Puerto micro-ROS (no cambiar)
+    ip: 192.168.1.100       # Tu IP (ver con: ipconfig)
+    port: 8888
 ```
 
-⚠️ **IMPORTANTE**: Cada vez que modifiques `data/config.yaml`, debes repetir los pasos 5 y 6.
-
-### 3. Configurar puerto COM
-Edita `platformio.ini` y cambia:
-```ini
-upload_port = COM3  ; Cambia COM3 por tu puerto
-```
-
-### 4. Compilar
+**Obtener tu IP:**
 ```cmd
-platformio run
+ipconfig
 ```
+Busca "Dirección IPv4" en "Adaptador de LAN inalámbrica Wi-Fi"
 
-### 5. Subir firmware
+⚠️ **ESP32 y computadora deben estar en la misma red WiFi**
+
+---
+
+## Uso
+
+### Compilar y subir firmware
 ```cmd
 platformio run --target upload
 ```
 
-### 6. Subir archivos de configuración (SPIFFS)
+### Subir configuración WiFi
 ```cmd
 platformio run --target uploadfs
 ```
 
-### 7. Ver salida serial
+### Monitor serial
 ```cmd
 platformio device monitor
 ```
+
+**Nota:** El puerto COM se detecta automáticamente. Si falla, verifica que el ESP32 esté conectado y los drivers instalados.
+
+---
+
+## Troubleshooting
+
+**Error: Puerto no detectado**
+- Verifica drivers USB instalados
+- Revisa Administrador de dispositivos → "Puertos (COM y LPT)"
+- Desconecta y reconecta el ESP32
+
+**Error: platformio no reconocido**
+- Reinicia el terminal
+- Verifica instalación: `pip show platformio`
+
+**Cambios en config.yaml no aplican**
+- Debes ejecutar `uploadfs` cada vez que modifiques `data/config.yaml`
 
 
