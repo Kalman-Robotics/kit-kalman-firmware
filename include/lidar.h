@@ -18,11 +18,11 @@
 #include "robot_config.h"
 #include "util.h"
 #include <micro_ros_kaia.h>
-#include <kaiaai_msgs/msg/kaiaai_telemetry2.h>
+#include <kalman_interfaces/msg/kaiaai_telemetry2.h>
 #include <HardwareSerial.h>
 
 extern CONFIG cfg;
-extern kaiaai_msgs__msg__KaiaaiTelemetry2 telem_msg;
+extern kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
 LDS *lidar;
 HardwareSerial LdSerial(2);
 

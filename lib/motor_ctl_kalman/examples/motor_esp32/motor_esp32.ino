@@ -1,4 +1,4 @@
-// Copyright 2023-2025 kalman.AI
+// Copyright 2023-2024 REMAKE.AI, kalman.AI, MAKERSPET.COM
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "LDS_DELTA_2G.h"
+#ifndef ESP32
+  #error This example runs on ESP32
+#endif
 
-const char* LDS_DELTA_2G::getModelName() {
-  return "3irobotics Delta-2G";
-}
+#include <MotorController.h>
 
-uint8_t LDS_DELTA_2G::get_packets_per_scan(){
-  return 15;
-}
+// TODO

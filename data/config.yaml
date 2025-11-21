@@ -6,10 +6,10 @@ robot:
   web: KALMANBOT_0.AI
   use_web: false 
   wifi: 
-    ssid: OozmaKappa
-    password: Ax3dr315
+    ssid: red
+    password: 123456789
   computer: 
-    ip: 192.168.18.16
+    ip: 172.30.132.78
     port: 8888
 board:
   manufacturer: kalmanrobotics.io
@@ -79,8 +79,8 @@ monitor:
   baud: 115200
 base:
   wheel:
-    track: 0.105043
-    diameter: 0.043
+    track: 0.086
+    diameter: 0.034
     accel:
       max: 2.0
 motor:

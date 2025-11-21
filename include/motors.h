@@ -1,4 +1,4 @@
-// Copyright 2023-2025 KAIA.AI
+// Copyright 2023-2025 kalman.AI
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include <motor_ctl_kaia.h>
+#include <motor_ctl_kalman.h>
 #include "robot_config.h"
 #include "util.h"
 

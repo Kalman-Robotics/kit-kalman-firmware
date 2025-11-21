@@ -1,4 +1,4 @@
-// Copyright 2023-2025 KAIA.AI
+// Copyright 2023-2025 kalman.AI
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 #include <rclc/executor.h>
 #include <rclc_parameter/rclc_parameter.h>
 //#include <rmw_microros/discovery.h>
-#include <kaiaai_msgs/msg/kaiaai_telemetry2.h>
+#include <kalman_interfaces/msg/kaiaai_telemetry2.h>
 #include <geometry_msgs/msg/twist.h>
 //#include <diagnostic_msgs/msg/diagnostic_array.h>
 #include <rcl_interfaces/msg/log.h>
@@ -41,7 +41,7 @@ rcl_publisher_t telem_pub;
 rcl_publisher_t log_pub;
 //rcl_publisher_t diag_pub;
 rcl_subscription_t twist_sub;
-kaiaai_msgs__msg__KaiaaiTelemetry2 telem_msg;
+kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
 geometry_msgs__msg__Twist twist_msg;
 rclc_support_t support;
 rcl_allocator_t allocator;
@@ -261,7 +261,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   }
 
   rc = rclc_publisher_init_best_effort(&telem_pub, &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(kaiaai_msgs, msg, KaiaaiTelemetry2), cfg.UROS_TELEM_TOPIC_NAME);
+    ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, KaiaaiTelemetry2), cfg.UROS_TELEM_TOPIC_NAME);
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_publisher_init_best_effort(");
     Serial.print(cfg.UROS_TELEM_TOPIC_NAME);
@@ -301,7 +301,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     Serial.print("rclc_parameter_server_init_with_option(");
     Serial.print(") error ");
     Serial.print(rc);
-    Serial.println("Make sure micro_ros_kaia library version is latest.");
+    Serial.println("Make sure micro_ros_kalman library version is latest.");
     return rc;
   }
 

@@ -2,7 +2,7 @@
 //   Arduino PID Library - Version 1.0.1
 //   by Brett Beauregard <br3ttb@gmail.com> brettbeauregard.com
 //
-// Copyright 2023-2025 KAIA.AI
+// Copyright 2023-2025 kalman.AI
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

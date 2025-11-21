@@ -1,7 +1,7 @@
 # LiDAR Library for Arduino
-Laser distance scan sensor (LIDAR) Arduino wrapper/controller for [kaia.ai](https://kaia.ai) home robot software platform.
-Please check out the [Awesome 2D LiDARs list](https://github.com/kaiaai/awesome-2d-lidars)
-and read this [blog post](https://kaia.ai/blog/arduino-lidar-library/) for more details.
+Laser distance scan sensor (LIDAR) Arduino wrapper/controller for [kalman.ai](https://kalman.ai) home robot software platform.
+Please check out the [Awesome 2D LiDARs list](https://github.com/kalman/awesome-2d-lidars)
+and read this [blog post](https://kalman.ai/blog/arduino-lidar-library/) for more details.
 
 Please visit the [Support Forum](https://github.com/makerspet/support/discussions/)!
 
@@ -17,7 +17,7 @@ This library supports:
 
 Other models are in the works.
 
-![LDS_collection_labeled_v3](https://github.com/kaiaai/LDS/assets/33589365/7b6a6a6f-a27c-45de-99c9-9e60d17b4d14)
+![LDS_collection_labeled_v3](https://github.com/kalman/LDS/assets/33589365/7b6a6a6f-a27c-45de-99c9-9e60d17b4d14)
 
 ### Video: YDLIDAR SCL runs on Arduino, ROS2
 <a href="http://www.youtube.com/watch?feature=player_embedded&v=7mj5hnlwmx4" target="_blank">
@@ -64,7 +64,7 @@ Please see the `examples` folder for sample Arduino sketches.
 
 ## Connecting to Arduino
 - Maker's Pet offers Lidar breakout boards for ESP32 for sale in its [onine store](https://makerspet.com/store/)
-- follow [this DIY tutorial](https://kaia.ai/blog/tutorial-connect-ld14p-lidar/) to connect LDROBOT LD14P to Arduino ESP32
+- follow [this DIY tutorial](https://kalman.ai/blog/tutorial-connect-ld14p-lidar/) to connect LDROBOT LD14P to Arduino ESP32
 
 ### Adapter Boards
 Some LiDAR models do not have built-in motor control and therefore require an additional board to operate:
@@ -182,4 +182,4 @@ LidarSerial.begin(baud_rate, SERIAL_8N1, 4, 5); // GPIO4 as RX1, GPIO5 as TX1
   - omit measurement quality since it usually does not get used
 
 ## Star History
-[![Star History Chart](https://api.star-history.com/svg?repos=kaiaai/LDS&type=Date)](https://star-history.com/#kaiaai/LDS&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=kalman/LDS&type=Date)](https://star-history.com/#kalman/LDS&Date)

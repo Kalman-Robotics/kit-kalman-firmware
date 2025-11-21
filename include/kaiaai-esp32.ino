@@ -1,4 +1,4 @@
-// Copyright 2023-2025 KAIA.AI
+// Copyright 2023-2025 kalman.AI
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 #include <SPIFFS.h>
 
 CONFIG cfg;
-kaiaai_msgs__msg__JointPosVel joint[MOTOR_COUNT];
+kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 
@@ -548,7 +548,7 @@ void setup() {
     delay(0);
 
   Serial.println();
-  Serial.print("Kaia.ai firmware version ");
+  Serial.print("kalman.ai firmware version ");
   Serial.println(cfg.FW_VERSION);
 
   Serial.print("ESP IDF version ");
