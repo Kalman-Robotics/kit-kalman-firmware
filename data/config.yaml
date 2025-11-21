@@ -2,14 +2,14 @@
 # Board-specific assignments
 #
 robot:
-  name: kalmanbot_0
-  web: KALMANBOT_0.AI
+  name: kalmanbot_03
+  web: KALMANBOT_03.AI
   use_web: false 
   wifi: 
-    ssid: red
-    password: 123456789
+    ssid: WIN_HOUSE_2.4
+    password: u9L@5rX!mQa#
   computer: 
-    ip: 172.30.132.78
+    ip: 192.168.18.31
     port: 8888
 board:
   manufacturer: kalmanrobotics.io
