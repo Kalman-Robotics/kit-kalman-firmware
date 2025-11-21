@@ -31,7 +31,7 @@ Este repositorio contiene el firmware del robot Kit-Kalman, basado en ESP32 y co
 ### 1. Descargar el firmware
 ```cmd
 cd C:\kalman
-git clone https://github.com/kalman-robotics/kit-kalman-firmware.git firmware
+git clone web-name https://github.com/kalman-robotics/kit-kalman-firmware.git firmware
 cd C:\kalman\firmware
 code ./
 ```
