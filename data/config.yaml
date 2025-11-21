@@ -2,8 +2,8 @@
 # Board-specific assignments
 #
 robot:
-  name: kalmanbot_03
-  web: KALMANBOT_03.AI
+  name: kalmanbot_04
+  web: KALMANBOT_04.AI
   use_web: false 
   wifi: 
     ssid: WIN_HOUSE_2.4
