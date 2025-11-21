@@ -18,6 +18,8 @@ Firmware para ESP32-S3 con micro-ROS y WiFi.
 
 ### 1. Clonar repositorio
 ```cmd
+cd C:\
+mkdir kalman
 cd C:\kalman
 git clone -b web-name https://github.com/kalman-robotics/kit-kalman-firmware.git firmware
 cd firmware\lib
