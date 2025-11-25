@@ -100,6 +100,13 @@ vcs import lib < kalman_dependencies.repos
 </details>
 
 ### 2. Instalar PlatformIO
+
+1. Abre Visual Studio Code
+2. Ve a Extensions (Ctrl+Shift+X)
+3. Busca "PlatformIO IDE"
+4. Haz click en "Install"
+5. Reinicia VSCode si es necesario
+
 <details>
 <summary>Windows (PowerShell / CMD)</summary>
 
