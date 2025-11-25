@@ -18,6 +18,19 @@ git clone https://github.com/tu-usuario/kit-kalman-firmware.git
 cd kit-kalman-firmware
 ```
 
+Incluir la última versión de `micro_ros_kalman` en el folder `lib`:
+- Si no está en el proyecto, agregar:
+```bash
+cd <folder_del_repositorio>
+vcs import lib < kalman_dependencies.repos
+```
+- Si ya está en el proyecto, actualizar:
+```bash
+cd <folder_del_repositorio>
+rm -rf lib/micro_ros_kalman
+vcs import lib < kalman_dependencies.repos
+```
+
 ### 2. Instalar la extensión de PlatformIO en VSCode
 1. Abre Visual Studio Code
 2. Ve a Extensions (Ctrl+Shift+X)
