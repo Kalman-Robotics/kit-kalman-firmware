@@ -6,6 +6,10 @@ Firmware para ESP32-S3 con micro-ROS y WiFi.
   Tu navegador no soporta el elemento de video.
 </video>
 
+
+https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
+
+
 - [Kit-Kalman Firmware](#kit-kalman-firmware)
   - [Requisitos](#requisitos)
     - [Software](#software)
