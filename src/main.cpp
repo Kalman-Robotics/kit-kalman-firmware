@@ -26,10 +26,12 @@
 #include "ros.h"
 #include "adc.h"
 #include "IMU6500.h"
+// #include "led_rgb.h"
 #include <SPIFFS.h>
 
 CONFIG cfg;
 IMU6500 imu;
+// RGBLedControl rgb_led(48); // not used because imu has the same pin
 kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
@@ -705,13 +707,14 @@ void setup() {
   setupLIDAR();
   setupADC();
   setupMotors();
-
   // Initialize IMU
   if (!imu.begin(48, 47, 400000)) {
     Serial.println("Error initializing IMU6500");
   } else {
     Serial.println("IMU6500 initialized successfully");
   }
+  // rgb_led.begin(); // Initialize RGB LED
+  // Serial.println("RGB LED initialized");
 
 
   while(!initWiFi(cfg.ssid, cfg.pass));

@@ -32,21 +32,29 @@
 #include "motors.h"
 #include "esp_mac.h"
 #include <kalman_interfaces/msg/imu_data.h>
+// #include <kalman_interfaces/msg/led.h>
+// #include <led_rgb.h>
 
 extern MotorController motorLeft, motorRight;
 extern CONFIG cfg;
 extern LDS *lidar;
+// extern RGBLedControl rgb_led;
 bool ros_config_params_changed = false;
 bool suppress_param_log_print = false;
 
+// ----- PUBLISHERS -----
 rcl_publisher_t telem_pub;
 rcl_publisher_t log_pub;
 rcl_publisher_t imu_pub;
 //rcl_publisher_t diag_pub;
+// ----- SUBSCRIBERS -----
 rcl_subscription_t twist_sub;
+// rcl_subscription_t led_sub;
+// ----- MESSAGES -----
 kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
 geometry_msgs__msg__Twist twist_msg;
 kalman_interfaces__msg__ImuData imu_msg;
+// kalman_interfaces__msg__Led led_msg;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rclc_executor_t executor;
@@ -176,6 +184,11 @@ rcl_ret_t syncRosTime() {
   return RCL_RET_OK;
 }
 
+// void led_sub_callback(const void *msgin) {
+//   const kalman_interfaces__msg__Led * msg = (const kalman_interfaces__msg__Led *)msgin;
+//   rgb_led.setColor(msg->r, msg->g, msg->b, msg->intensity, msg->state);
+// }
+
 rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   rcl_ret_t rc;
   allocator = rcl_get_default_allocator();
@@ -264,6 +277,14 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     return rc;
   }
 
+  // rc = rclc_subscription_init_default(&led_sub, &node,
+  //   ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, Led), "/rgb_led");
+  // if (rc != RCL_RET_OK) {
+  //   Serial.print("rclc_subscription_init_default(/rgb_led) error ");
+  //   Serial.println(rc);
+  //   return rc;
+  // }
+
   rc = rclc_publisher_init_best_effort(&telem_pub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, KaiaaiTelemetry2), cfg.UROS_TELEM_TOPIC_NAME);
   if (rc != RCL_RET_OK) {
@@ -319,7 +340,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   }
 
   rc = rclc_executor_init(&executor, &support.context,
-    RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 1, &allocator);
+    RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 1, &allocator); // +1 for twist subscriber
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_executor_init(");
     Serial.print(") error ");
@@ -336,6 +357,14 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     Serial.println(rc);
     return rc;
   }
+
+  // rc = rclc_executor_add_subscription(&executor, &led_sub, &led_msg,
+  //   led_sub_callback, ON_NEW_DATA);
+  // if (rc != RCL_RET_OK) {
+  //   Serial.print("rclc_executor_add_subscription(led_msg) error ");
+  //   Serial.println(rc);
+  //   return rc;
+  // }
 
   rc = rclc_executor_add_parameter_server(&executor, &param_server,
     on_ros_param_changed);
