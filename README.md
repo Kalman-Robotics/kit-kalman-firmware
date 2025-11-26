@@ -11,6 +11,7 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
 
 
 - [Kit-Kalman Firmware](#kit-kalman-firmware)
+  - [Características del Kit-Kalman](#características-del-kit-kalman)
   - [Requisitos](#requisitos)
     - [Software](#software)
     - [Drivers USB (instalar según tu chip)](#drivers-usb-instalar-según-tu-chip)
@@ -31,6 +32,36 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
     - [Error: platformio no reconocido](#error-platformio-no-reconocido)
     - [Cambios en config.yaml no aplican](#cambios-en-configyaml-no-aplican)
 
+
+## Características del Kit-Kalman
+<details>
+<summary>Ver características</summary>
+
+- Microcontrolador: ESP32-S3
+- Sensores:
+  - LiDAR 360° 
+  - Encoders en ruedas
+  - IMU 6DOF (Acelerómetro y Giroscopio)
+  - Sensor de voltaje de batería
+- Actuadores:
+  - Motores DC con drivers integrados
+  - Buzzer
+  - LED
+- Comunicación: micro-ROS sobre WiFi
+- Alimentación: 1 Batería recargable
+- Dimensiones compactas y diseño original
+</details>
+
+<details>
+<summary>Ver velocidad de procesos</summary>
+
+- Telemetría WiFi: 20Hz
+- Control PID de velocidad: 33.3 Hz
+- Publicación del IMU: 100 Hz
+- Publicación del LiDAR: 10 Hz
+- Actualización de parámetros: 2 Hz
+- Monitoreo del agente micro-ROS: 0.1 Hz
+</details>
 
 ## Requisitos
 
