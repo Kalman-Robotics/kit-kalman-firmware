@@ -42,7 +42,7 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
   - LiDAR 360° 
   - Encoders en ruedas
   - IMU 6DOF (Acelerómetro y Giroscopio)
-  - Sensor de voltaje de batería
+  - Medidor de voltaje de batería
 - Actuadores:
   - Motores DC con drivers integrados
   - Buzzer

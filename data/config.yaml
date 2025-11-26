@@ -60,12 +60,11 @@ motor:
         in2: 2
 adc:
   battery:
-    attenuation: 3.5
+    attenuation: 7.0 # applied voltage divider
     gpio: 8
-    voltage:
-# 12V motors, 6x AA/D/C (1.2-1.6V) batteries
-      full: 9.6
-      empty: 7.2
+    voltage: # related to Battery voltage (without reduction)
+      full: 1.96
+      empty: 1.64
 
 #
 # Peripherals configuration
