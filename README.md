@@ -323,4 +323,4 @@ Del lado de la computadora:
 </details>
 
 ## Agradecimientos especiales
-Agradecemos especialmente al equipo de Kaia.ai. Este trabajo en ROS2 se ha desarrollado tomando como base su trabajo y recursos; muchas de las ideas y la arquitectura inicial provienen de su aporte. El repositorio presentando aquí es una adaptación y modificación del trabajo original de [Kaia.ai](https://blog.kaia.ai/) para integrarlo con ROS2 y las particularidades del Kit Kalman. 
+Agradecemos especialmente al equipo de Kaia.ai. Este trabajo en Micro-ROS se ha desarrollado tomando como base su trabajo y recursos; muchas de las ideas y la arquitectura inicial provienen de su aporte. El repositorio presentando aquí es una adaptación y modificación del trabajo original de [Kaia.ai](https://blog.kaia.ai/) para integrarlo con Micro-ROS y las particularidades del Kit Kalman. 
