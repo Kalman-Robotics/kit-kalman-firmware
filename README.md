@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
   - [Requisitos](#requisitos)
     - [Software](#software)
     - [Drivers USB (instalar según tu chip)](#drivers-usb-instalar-según-tu-chip)
-  - [Instalación](#instalación)
+  - [Instalación y configuración](#instalación-y-configuración)
     - [1. Clonar repositorio y agregar dependencias](#1-clonar-repositorio-y-agregar-dependencias)
     - [2. Instalar PlatformIO](#2-instalar-platformio)
     - [3. Configurar WiFi](#3-configurar-wifi)
@@ -73,7 +73,7 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
 - [CH340](https://sparks.gogo.co.nz/ch340.html): utilizada por el Kit-Kalman
 
 
-## Instalación
+## Instalación y configuración
 
 ### 1. Clonar repositorio y agregar dependencias
 
