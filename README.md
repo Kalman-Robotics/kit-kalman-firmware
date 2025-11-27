@@ -6,9 +6,7 @@ Firmware para ESP32-S3 con micro-ROS y WiFi.
   Tu navegador no soporta el elemento de video.
 </video>
 
-
 https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
-
 
 - [Kit-Kalman Firmware](#kit-kalman-firmware)
   - [Características del Kit-Kalman](#características-del-kit-kalman)
@@ -31,7 +29,7 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
     - [Error: Puerto no detectado](#error-puerto-no-detectado)
     - [Error: platformio no reconocido](#error-platformio-no-reconocido)
     - [Cambios en config.yaml no aplican](#cambios-en-configyaml-no-aplican)
-
+  - [Agradecimientos especiales](#agradecimientos-especiales)
 
 ## Características del Kit-Kalman
 <details>
@@ -323,3 +321,6 @@ Del lado de la computadora:
 - Asegura permisos de acceso al puerto serie (`/dev/ttyUSB0`/`/dev/ttyACM0`) y que tu usuario esté en el grupo dialout.
 - Confirma que el `data/config.yaml` modificado es el del proyecto y revisa la salida del comando para errores. Reinicia el dispositivo si hace falta.
 </details>
+
+## Agradecimientos especiales
+Agradecemos especialmente al equipo de Kaia.ai. Este trabajo en ROS2 se ha desarrollado tomando como base su trabajo y recursos; muchas de las ideas y la arquitectura inicial provienen de su aporte. El repositorio presentando aquí es una adaptación y modificación del trabajo original de [Kaia.ai](https://blog.kaia.ai/) para integrarlo con ROS2 y las particularidades del Kit Kalman. 
