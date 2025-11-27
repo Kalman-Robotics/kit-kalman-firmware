@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/7aa0fbdb-eac2-4d8c-a0b1-aa40485893ad
     - [1. Clonar repositorio y agregar dependencias](#1-clonar-repositorio-y-agregar-dependencias)
     - [2. Instalar PlatformIO](#2-instalar-platformio)
     - [3. Configurar WiFi](#3-configurar-wifi)
-      - [Obtner tu IP local](#obtner-tu-ip-local)
+      - [Obtener tu IP local](#obtener-tu-ip-local)
     - [4. Configurar platformio.ini](#4-configurar-platformioini)
       - [Obtener el puerto](#obtener-el-puerto)
   - [Uso de PlatformIO para compilar, subir y monitorear](#uso-de-platformio-para-compilar-subir-y-monitorear)
@@ -180,7 +180,7 @@ robot:
     port: 8888
 ```
 
-#### Obtner tu IP local
+#### Obtener tu IP local
 
 <details>
 <summary>Windows (PowerShell / CMD)</summary>
