@@ -63,8 +63,8 @@ adc:
     attenuation: 7.0 # applied voltage divider
     gpio: 8
     voltage: # related to Battery voltage (without reduction)
-      full: 1.96
-      empty: 1.64
+      full: 4.1
+      empty: 3.5
 
 #
 # Peripherals configuration
