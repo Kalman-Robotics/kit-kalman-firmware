@@ -6,10 +6,10 @@ robot:
   web: KALMANBOT_01.AI
   use_web: false 
   wifi: 
-    ssid: OozmaKappa
-    password: Ax3dr315
+    ssid: ROBOSKILLS
+    password: sirius12
   computer: 
-    ip: 192.168.18.16
+    ip: 192.168.18.203
     port: 8888
 board:
   manufacturer: kalmanrobotics.io

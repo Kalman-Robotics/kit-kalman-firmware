@@ -27,13 +27,14 @@
 #include "adc.h"
 #include "IMU6500.h"
 #include "buzzer.h"
-// #include "led_rgb.h"
+#include "led_rgb.h"
 #include <SPIFFS.h>
 
+#define PIN_BUZZER 10
 CONFIG cfg;
 IMU6500 imu;
-BuzzerController buzzer(10);
-// RGBLedControl rgb_led(48); // not used because imu has the same pin
+BuzzerController buzzer(PIN_BUZZER);
+RGBLedControl rgb_led(48); // NOTE: pin 48 also used by IMU I2C SDA — may conflict
 kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
@@ -42,6 +43,7 @@ unsigned long telem_prev_pub_time_us = 0;
 unsigned long ping_prev_pub_time_us = 0;
 unsigned long ros_params_update_prev_time_us = 0;
 unsigned long imu_last_pub_us = 0;
+unsigned long last_cmd_vel_us = 0;  // watchdog: last /cmd_vel received
 
 unsigned long ramp_duration_us = 0;
 unsigned long ramp_start_time_us = 0;
@@ -80,6 +82,7 @@ void twist_sub_callback(const void *msgin);
 // -------- FUNCTION PROTOYPES --------
 
 void twist_sub_callback(const void *msgin) {
+  last_cmd_vel_us = esp_timer_get_time(); // watchdog: reset timer on each command
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
 
   float target_speed_lin_x = msg->linear.x;
@@ -284,7 +287,7 @@ void spinTelem(bool force_pub) {
   stat_sum_spin_telem_period_us += step_time_us;
   stat_max_spin_telem_period_us = stat_max_spin_telem_period_us <= step_time_us ?
     step_time_us : stat_max_spin_telem_period_us;
-  
+
   // How often telemetry gets published
   if (++telem_pub_count % cfg.SPIN_TELEM_STATS == 0) {
     String s = "Telem avg ";
@@ -408,7 +411,7 @@ void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right,
 void spinPing() {
   unsigned long time_now_us = esp_timer_get_time();
   unsigned long step_time_us = time_now_us - ping_prev_pub_time_us;
-  
+
   if (step_time_us >= cfg.UROS_PING_PUB_PERIOD_US) {
     // timeout_ms, attempts
     rmw_uros_ping_agent(1, 1); //rmw_ret_t rc =
@@ -469,10 +472,14 @@ void loop() {
   spinTelem(false);
   spinPing();
 
-  if (wifi_ok)
-    updateSpeedRamp();
-  else
+  // Watchdog: stop motors if no /cmd_vel received in 500ms
+  bool cmd_vel_timeout = last_cmd_vel_us > 0 &&
+    (esp_timer_get_time() - last_cmd_vel_us) > 500000UL;
+
+  if (!wifi_ok || cmd_vel_timeout)
     setMotorSpeeds(0, 0);
+  else
+    updateSpeedRamp();
 
   motorLeft.update();
   motorRight.update();
@@ -522,7 +529,7 @@ void resetTelemMsg() {
   telem_msg.wifi_rssi_dbm = 0;
 }
 void spinIMU(unsigned long time_now_us) {
-  if ((time_now_us - imu_last_pub_us) < 10000)  // 10ms = 100Hz
+  if ((time_now_us - imu_last_pub_us) < cfg.UROS_IMU_PUB_PERIOD_US)
     return;
 
   imu.read();
@@ -574,6 +581,20 @@ void error_loop(int n_blinks){
 */
 
 void setup() {
+
+  // Pin 15: HIGH until micro-ROS agent connected, then LOW
+  pinMode(15, OUTPUT);
+  digitalWrite(15, HIGH);
+
+  // Silence buzzer immediately — active-low: HIGH = transistor off = silent
+  pinMode(PIN_BUZZER, INPUT);
+  /*digitalWrite(PIN_BUZZER, HIGH);
+  delay(2000);
+  digitalWrite(PIN_BUZZER, LOW);
+  delay(2000);
+  digitalWrite(PIN_BUZZER, HIGH);
+  delay(2000);
+  digitalWrite(PIN_BUZZER, LOW);*/
 
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
@@ -709,24 +730,82 @@ void setup() {
   setupLIDAR();
   setupADC();
   setupMotors();
-  // Initialize IMU
+  //buzzer.begin();
+  Serial.println("Buzzer initialized");
+
+  // RGB LED before IMU (both share pin 48)
+  rgb_led.begin();
+  Serial.println("RGB LED initialized");
+
+  // Blue: connecting to WiFi
+  rgb_led.setColor(0, 80, 255, 30, true);
+  while(!initWiFi(cfg.ssid, cfg.pass));
+
+  // Transport must be set before ping
+  set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
+  delay(500);
+
+  // Amber blink: ping agent every 5 s, max 10 min
+  {
+    const unsigned long AGENT_WAIT_MS = 10UL * 60UL * 1000UL;
+    const unsigned long CHECK_INTERVAL_MS = 5000UL;
+    Serial.println("Searching for micro-ROS agent (max 10 min)...");
+    unsigned long wait_start = millis();
+    unsigned long last_check_ms = 0;
+    unsigned long last_blink_ms = millis();
+    bool led_on = true;
+    bool agent_found = false;
+    rgb_led.setColor(255, 80, 0, 30, true);
+
+    while (millis() - wait_start < AGENT_WAIT_MS) {
+      unsigned long now = millis();
+
+      if (now - last_blink_ms >= 800) {
+        led_on = !led_on;
+        rgb_led.setColor(255, 80, 0, 30, led_on);
+        last_blink_ms = now;
+      }
+
+      if (now - last_check_ms >= CHECK_INTERVAL_MS) {
+        last_check_ms = now;
+        Serial.print("Pinging agent... ");
+        if (rmw_uros_ping_agent(2000, 1) == RMW_RET_OK) {
+          Serial.println("found!");
+          agent_found = true;
+          break;
+        }
+        Serial.print("no response, ");
+        Serial.print((AGENT_WAIT_MS - (now - wait_start)) / 1000);
+        Serial.println("s remaining");
+      }
+      delay(10);
+    }
+
+    if (!agent_found) {
+      Serial.println("ERROR: micro-ROS agent not found after 10 min");
+      // Red fast blink: error state, hang here
+      while (true) {
+        rgb_led.setColor(255, 0, 0, 60, true);
+        delay(150);
+        rgb_led.setColor(255, 0, 0, 60, false);
+        delay(150);
+      }
+    }
+  }
+
+  setupMicroROS(&twist_sub_callback);
+
+  // Green: micro-ROS connected — show briefly before handing pin 48 to IMU
+  rgb_led.setColor(0, 200, 0, 30, true);
+  delay(2000);
+
+  // Initialize IMU last — takes over pin 48 (I2C SDA), LED stops here
   if (!imu.begin(48, 47, 400000)) {
     Serial.println("Error initializing IMU6500");
   } else {
     Serial.println("IMU6500 initialized successfully");
   }
-  buzzer.begin(); // Initialize Buzzer
-  Serial.println("Buzzer initialized");
-  // rgb_led.begin(); // Initialize RGB LED
-  // Serial.println("RGB LED initialized");
-
-
-  while(!initWiFi(cfg.ssid, cfg.pass));
-
-  set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
-  delay(2000);
-
-  setupMicroROS(&twist_sub_callback);
+  rgb_led.turnOff(); // pin 48 now belongs to I2C
 
   //pubDiagnostics();
 
@@ -747,8 +826,6 @@ void setup() {
   //pubDiagnostics();
   
   resetTelemMsg();
-  
-  startLIDAR();
-    //blink_error_code(cfg.ERR_LIDAR_START);
-    //error_loop(cfg.ERR_LIDAR_START);
+  // LiDAR start is deferred: controlled via /_lidar_power topic
+  // startLIDAR() is called in lidar_power_sub_callback() when data: true is received
 }

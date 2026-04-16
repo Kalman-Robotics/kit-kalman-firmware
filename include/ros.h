@@ -34,6 +34,7 @@
 #include <kalman_interfaces/msg/imu_data.h>
 #include <kalman_interfaces/msg/buzzer.h>
 #include <buzzer.h>
+#include <std_msgs/msg/bool.h>
 // #include <kalman_interfaces/msg/led.h>
 // #include <led_rgb.h>
 
@@ -53,12 +54,14 @@ rcl_publisher_t imu_pub;
 // ----- SUBSCRIBERS -----
 rcl_subscription_t twist_sub;
 rcl_subscription_t buzzer_sub;
+rcl_subscription_t lidar_power_sub;
 // rcl_subscription_t led_sub;
 // ----- MESSAGES -----
 kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
 geometry_msgs__msg__Twist twist_msg;
 kalman_interfaces__msg__ImuData imu_msg;
 kalman_interfaces__msg__Buzzer buzzer_msg;
+std_msgs__msg__Bool lidar_power_msg;
 // kalman_interfaces__msg__Led led_msg;
 rclc_support_t support;
 rcl_allocator_t allocator;
@@ -194,6 +197,15 @@ void buzzer_sub_callback(const void *msgin) {
   buzzer.playTone(msg->frequency, msg->state);
 }
 
+void lidar_power_sub_callback(const void *msgin) {
+  const std_msgs__msg__Bool * msg = (const std_msgs__msg__Bool *)msgin;
+  digitalWrite(15, msg->data ? LOW : HIGH);  // LOW = MOSFET ON = LiDAR powered
+  if (msg->data)
+    lidar->start();
+  else
+    lidar->stop();
+}
+
 // void led_sub_callback(const void *msgin) {
 //   const kalman_interfaces__msg__Led * msg = (const kalman_interfaces__msg__Led *)msgin;
 //   rgb_led.setColor(msg->r, msg->g, msg->b, msg->intensity, msg->state);
@@ -234,6 +246,12 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
 
   uint32_t client_key = mac[1]<<(3*8) | mac[2]<<(2*8) | mac[3]<<(1*8) | mac[4];
   client_key = client_key<<(8-2) | mac[5]>>2;  // TODO multiple bots
+  rc = rcl_init_options_set_domain_id(&init_options, 20);
+  if (rc != RCL_RET_OK) {
+    Serial.print(F("rcl_init_options_set_domain_id() error "));
+    Serial.println(rc);
+  }
+
   rc = rmw_uros_options_set_client_key(client_key, rmw_options);
   if (rc != RCL_RET_OK) {
     Serial.print(F("rmw_uros_options_set_client_key("));
@@ -291,6 +309,14 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
       ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, Buzzer), "/buzzer");
   if (rc != RCL_RET_OK) {
       Serial.print("rclc_subscription_init_default(/buzzer) error ");
+      Serial.println(rc);
+      return rc;
+  }
+
+  rc = rclc_subscription_init_default(&lidar_power_sub, &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool), "/_lidar_power");
+  if (rc != RCL_RET_OK) {
+      Serial.print("rclc_subscription_init_default(/_lidar_power) error ");
       Serial.println(rc);
       return rc;
   }
@@ -358,7 +384,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   }
 
   rc = rclc_executor_init(&executor, &support.context,
-    RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 2, &allocator); // +1 for each subscriber
+    RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 3, &allocator); // +1 for each subscriber
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_executor_init(");
     Serial.print(") error ");
@@ -380,6 +406,14 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
       buzzer_sub_callback, ON_NEW_DATA);
   if (rc != RCL_RET_OK) {
       Serial.print("rclc_executor_add_subscription(buzzer_msg) error ");
+      Serial.println(rc);
+      return rc;
+  }
+
+  rc = rclc_executor_add_subscription(&executor, &lidar_power_sub, &lidar_power_msg,
+      lidar_power_sub_callback, ON_NEW_DATA);
+  if (rc != RCL_RET_OK) {
+      Serial.print("rclc_executor_add_subscription(/_lidar_power) error ");
       Serial.println(rc);
       return rc;
   }

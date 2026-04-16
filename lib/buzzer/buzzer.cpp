@@ -21,6 +21,7 @@ void BuzzerController::playTone(uint16_t frequency, bool enable) {
 
 void BuzzerController::turnOff() {
     noTone(gpio_pin);
-    pinMode(gpio_pin, INPUT); // Deja el pin en alta impedancia 
+    pinMode(gpio_pin, OUTPUT);
+    digitalWrite(gpio_pin, HIGH); // active-low: HIGH = transistor off = silent
     is_playing = false;
 }
