@@ -5,11 +5,13 @@ robot:
   name: kalmanbot_01
   web: KALMANBOT_01.AI
   use_web: false 
-  wifi: 
-    ssid: ROBOSKILLS
-    password: sirius12
+  wifi:
+    ssid: kalman-robot
+    password: kalman2024
+    #static_ip: 192.168.4.100
+    #gateway: 192.168.4.1
   computer: 
-    ip: 192.168.18.203
+    ip: 192.168.4.1
     port: 8888
 board:
   manufacturer: kalmanrobotics.io

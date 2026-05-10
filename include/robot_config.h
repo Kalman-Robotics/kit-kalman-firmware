@@ -109,6 +109,8 @@ public:
 public:
   String ssid = "";
   String pass = "";
+  String static_ip = "";
+  String gateway_ip = "";
   String dest_ip = "";
   String board_manufacturer = "N/A";
   String board_model = "N/A";
@@ -311,6 +313,10 @@ public:
         ssid = trimString(pvalue);
       else if (lname[2] == "password")
         pass = trimString(pvalue);
+      else if (lname[2] == "static_ip")
+        static_ip = trimString(pvalue);
+      else if (lname[2] == "gateway")
+        gateway_ip = trimString(pvalue);
       return;
     }
 
