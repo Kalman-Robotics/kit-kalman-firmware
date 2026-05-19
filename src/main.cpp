@@ -799,14 +799,22 @@ void setup() {
   // Amber blink: ping agent every 5 s, max 10 min
   {
     const unsigned long CHECK_INTERVAL_MS = 5000UL;
+    const unsigned long AGENT_TIMEOUT_MS = 30000UL;
     Serial.println("Searching for micro-ROS agent...");
     unsigned long last_check_ms = 0;
     unsigned long last_blink_ms = millis();
+    unsigned long search_start_ms = millis();
     bool led_on = true;
     rgb_led.setColor(255, 80, 0, 30, true);
 
     while (true) {
       unsigned long now = millis();
+
+      if (now - search_start_ms >= AGENT_TIMEOUT_MS) {
+        Serial.println("Agent not found, restarting...");
+        delay(500);
+        ESP.restart();
+      }
 
       if (now - last_blink_ms >= 800) {
         led_on = !led_on;
