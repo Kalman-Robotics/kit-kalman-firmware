@@ -112,6 +112,7 @@ public:
   String static_ip = "";
   String gateway_ip = "";
   String dest_ip = "";
+  uint8_t ros_domain_id = 0;
   String board_manufacturer = "N/A";
   String board_model = "N/A";
   String board_version = "N/A";
@@ -325,6 +326,8 @@ public:
         dest_ip = trimString(pvalue);
       else if (lname[2] == "port")
         dest_port = (unsigned int) pvalue.toInt();
+      else if (lname[2] == "domain_id")
+        ros_domain_id = (uint8_t) pvalue.toInt();
       return;
     }
 

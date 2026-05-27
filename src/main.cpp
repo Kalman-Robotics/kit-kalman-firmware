@@ -34,28 +34,26 @@
 CONFIG cfg;
 IMU6500 imu;
 BuzzerController buzzer(PIN_BUZZER);
-RGBLedControl rgb_led(48); // NOTE: pin 48 also used by IMU I2C SDA — may conflict
+RGBLedControl rgb_led(48);
 kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 
-uint64_t telem_prev_pub_time_us = 0;
-uint64_t ping_prev_pub_time_us = 0;
-uint64_t last_ping_ok_us = 0;
-uint64_t ros_params_update_prev_time_us = 0;
-uint64_t imu_last_pub_us = 0;
-uint64_t last_cmd_vel_us = 0;  // watchdog: last /cmd_vel received
+unsigned long telem_prev_pub_time_us = 0;
+unsigned long ping_prev_pub_time_us = 0;
+unsigned long ros_params_update_prev_time_us = 0;
+unsigned long imu_last_pub_us = 0;
 
-uint64_t ramp_duration_us = 0;
-uint64_t ramp_start_time_us = 0;
+unsigned long ramp_duration_us = 0;
+unsigned long ramp_start_time_us = 0;
 float ramp_start_rpm_right = 0;
 float ramp_start_rpm_left = 0;
 float ramp_target_rpm_right = 0;
 float ramp_target_rpm_left = 0;
 bool ramp_enabled = true;
 
-uint64_t stat_sum_spin_telem_period_us = 0;
-uint64_t stat_max_spin_telem_period_us = 0;
+unsigned long stat_sum_spin_telem_period_us = 0;
+unsigned long stat_max_spin_telem_period_us = 0;
 
 #if ESP_IDF_VERSION_MAJOR >= 5
   #error Espressif IDF v5 is not yet supported
@@ -63,11 +61,11 @@ uint64_t stat_max_spin_telem_period_us = 0;
 
 // -------- FUNCTION PROTOYPES --------
 void updateSpeedRamp();
-void publishTelem(uint64_t step_time_us);
-void calcOdometry(uint64_t step_time_us, float joint_pos_delta_right, float joint_pos_delta_left);
+void publishTelem(unsigned long step_time_us);
+void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right, float joint_pos_delta_left);
 void spinTelem(bool force_pub);
 void spinPing();
-void spinIMU(uint64_t time_now_us);
+void spinIMU(unsigned long time_now_us);
 void updateROSParams();
 void setMotorSpeeds(float rpm_left, float rpm_right);
 bool isBootButtonPressed(uint8_t sec);
@@ -83,11 +81,14 @@ void twist_sub_callback(const void *msgin);
 // -------- FUNCTION PROTOYPES --------
 
 void twist_sub_callback(const void *msgin) {
-  last_cmd_vel_us = esp_timer_get_time(); // watchdog: reset timer on each command
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
 
-  float target_speed_lin_x = constrain(msg->linear.x, -0.15f, 0.15f);
-  float target_speed_ang_z = constrain(msg->angular.z, -1.5f, 1.5f);
+  float target_speed_lin_x = msg->linear.x;
+  float target_speed_ang_z = msg->angular.z;
+  //Serial.print("linear.x ");
+  //Serial.print(msg->linear.x);
+  //Serial.print(", angular.z ");
+  //Serial.println(msg->angular.z);
 
   if (msg->linear.y != 0) {
     Serial.print("Warning: /cmd_vel linear.y = ");
@@ -190,8 +191,8 @@ void updateSpeedRamp() {
     return;
   }
 
-  uint64_t time_now_us = esp_timer_get_time();
-  uint64_t ramp_elapsed_time_us = time_now_us - ramp_start_time_us;
+  unsigned long time_now_us = esp_timer_get_time();
+  unsigned long ramp_elapsed_time_us = time_now_us - ramp_start_time_us;
 
   float rpm_right;
   float rpm_left;
@@ -229,45 +230,27 @@ String set_param_callback(const char * param_name, const char * param_value) {
 
 static inline bool initWiFi(const String & ssid, const String & passw) {
 
-  WiFi.disconnect();
   WiFi.mode(WIFI_STA);
-  delay(100);
-
-  if (cfg.static_ip.length() > 0) {
-    IPAddress local_IP, gateway, subnet(255, 255, 255, 0), dns(8, 8, 8, 8);
-    if (local_IP.fromString(cfg.static_ip) && gateway.fromString(cfg.gateway_ip))
-      WiFi.config(local_IP, gateway, subnet, dns);
-  }
+  WiFi.begin(ssid, passw);
 
   const uint32_t blink_delay = 500;
   unsigned long startMillis = millis();
-
-  WiFi.begin(ssid, passw);
 
   while (WiFi.status() != WL_CONNECTED) {
     Serial.println();
     Serial.print("Connecting to WiFi ");
     Serial.print(ssid);
-    Serial.print(" ... status=");
-    Serial.print(WiFi.status());
+    Serial.print(" ...");
 
     if (millis() - startMillis >= cfg.WIFI_CONN_TIMEOUT_MS) {
       Serial.println(" timed out");
       return false;
     }
 
-    // AP rejected (status=4) or disconnected — retry WiFi.begin after a pause
-    uint8_t st = WiFi.status();
-    if (st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL) {
-      Serial.println(" retrying...");
-      WiFi.disconnect();
-      delay(3000);
-      WiFi.begin(ssid, passw);
-    }
-
     digiWrite(cfg.led_sys_gpio, HIGH, cfg.led_sys_invert);
     delay(blink_delay);
     digiWrite(cfg.led_sys_gpio, LOW, cfg.led_sys_invert);
+    //Serial.print('.'); // F('.') crashes
     delay(blink_delay);
   }
 
@@ -281,8 +264,8 @@ static inline bool initWiFi(const String & ssid, const String & passw) {
 
 void spinTelem(bool force_pub) {
   static int telem_pub_count = 0;
-  uint64_t time_now_us = esp_timer_get_time();
-  uint64_t step_time_us = time_now_us - telem_prev_pub_time_us;
+  unsigned long time_now_us = esp_timer_get_time();
+  unsigned long step_time_us = time_now_us - telem_prev_pub_time_us;
 
   if (!force_pub && (step_time_us < cfg.UROS_TELEM_PUB_PERIOD_US))
     return;
@@ -302,7 +285,7 @@ void spinTelem(bool force_pub) {
   stat_sum_spin_telem_period_us += step_time_us;
   stat_max_spin_telem_period_us = stat_max_spin_telem_period_us <= step_time_us ?
     step_time_us : stat_max_spin_telem_period_us;
-
+  
   // How often telemetry gets published
   if (++telem_pub_count % cfg.SPIN_TELEM_STATS == 0) {
     String s = "Telem avg ";
@@ -330,7 +313,7 @@ void spinTelem(bool force_pub) {
   }
 }
 
-void publishTelem(uint64_t step_time_us) {
+void publishTelem(unsigned long step_time_us) {
   struct timespec tv = {0, 0};
   clock_gettime(CLOCK_REALTIME, &tv);
   telem_msg.stamp.sec = tv.tv_sec;
@@ -364,12 +347,9 @@ void publishTelem(uint64_t step_time_us) {
 
   rcl_ret_t rc = rcl_publish(&telem_pub, &telem_msg, NULL);
   if (rc != RCL_RET_OK) {
-    Serial.print("rcl_publish(telem_msg) error ");
+    Serial.print("rcl_publish(telem_msg");
+    Serial.print(") error ");
     Serial.println(rc);
-    Serial.println("micro-ROS agent lost, restarting...");
-    setMotorSpeeds(0, 0);
-    delay(500);
-    ESP.restart();
   }
   
   //Serial.print(telem_msg.odom_pos_x, 8);
@@ -382,7 +362,7 @@ void publishTelem(uint64_t step_time_us) {
   telem_msg.seq++;
 }
 
-void calcOdometry(uint64_t step_time_us, float joint_pos_delta_right,
+void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right,
   float joint_pos_delta_left) {
 
   if (step_time_us == 0)
@@ -427,47 +407,14 @@ void calcOdometry(uint64_t step_time_us, float joint_pos_delta_right,
 }
 
 void spinPing() {
-  static uint8_t ping_fail_count = 0;
-  uint64_t time_now_us = esp_timer_get_time();
-  uint64_t step_time_us = time_now_us - ping_prev_pub_time_us;
-
-  if (step_time_us < cfg.UROS_PING_PUB_PERIOD_US)
-    return;
-
-  ping_prev_pub_time_us = time_now_us;
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi lost, restarting...");
-    setMotorSpeeds(0, 0);
-    delay(500);
-    ESP.restart();
-  }
-
-  // 200ms: enough for local WiFi round-trip, doesn't block the loop significantly
-  rmw_ret_t rc = rmw_uros_ping_agent(200, 1);
-
-  if (rc != RMW_RET_OK) {
-    Serial.print("Ping failed (");
-    Serial.print(++ping_fail_count);
-    Serial.println("/3)");
-    if (ping_fail_count >= 3) {
-      Serial.println("micro-ROS agent lost, restarting...");
-      setMotorSpeeds(0, 0);
-      delay(500);
-      ESP.restart();
-    }
-  } else {
-    ping_fail_count = 0;
-    last_ping_ok_us = time_now_us;
-  }
-
-  // Fallback: if ping keeps returning OK but UDP is failing (error 118),
-  // restart after 30s without a confirmed good ping
-  if (time_now_us - last_ping_ok_us > 30ULL * 1000000ULL) {
-    Serial.println("Ping OK but no UDP route, restarting...");
-    setMotorSpeeds(0, 0);
-    delay(500);
-    ESP.restart();
+  unsigned long time_now_us = esp_timer_get_time();
+  unsigned long step_time_us = time_now_us - ping_prev_pub_time_us;
+  
+  if (step_time_us >= cfg.UROS_PING_PUB_PERIOD_US) {
+    // timeout_ms, attempts
+    rmw_uros_ping_agent(1, 1); //rmw_ret_t rc =
+    ping_prev_pub_time_us = time_now_us;
+    //Serial.println(rc == RCL_RET_OK ? "Ping OK" : "Ping error");
   }
 }
 
@@ -481,8 +428,8 @@ void updateROSParams() {
     }
   }
 
-  uint64_t time_now_us = esp_timer_get_time();
-  uint64_t step_time_us = time_now_us - ros_params_update_prev_time_us;
+  unsigned long time_now_us = esp_timer_get_time();
+  unsigned long step_time_us = time_now_us - ros_params_update_prev_time_us;
   if (step_time_us >= cfg.UROS_PARAMS_UPDATE_PERIOD_US) {
 
     rcl_ret_t ret = updateROSRealTimeParams();
@@ -500,11 +447,11 @@ void loop() {
 
   bool wifi_ok = WiFi.status() == WL_CONNECTED;
   if (wifi_ok && !wifi_ok_prev) {
+    lidar->start();
     Serial.println("WiFi connection restored");
   } else if (!wifi_ok && wifi_ok_prev) {
     lidar->stop();
-    digitalWrite(15, LOW);
-    Serial.println("WiFi connection lost: pausing motors, LiDAR off");
+    Serial.println("WiFi connection lost: pausing motors, LiDAR");
   }
   wifi_ok_prev = wifi_ok;
 
@@ -518,19 +465,15 @@ void loop() {
   }
 
   updateROSParams();
-  uint64_t time_now_us = esp_timer_get_time();
+  unsigned long time_now_us = esp_timer_get_time();
   spinIMU(time_now_us);
   spinTelem(false);
   spinPing();
 
-  // Watchdog: stop motors if no /cmd_vel received in 500ms
-  bool cmd_vel_timeout = last_cmd_vel_us > 0 &&
-    (esp_timer_get_time() - last_cmd_vel_us) > 500000UL;
-
-  if (!wifi_ok || cmd_vel_timeout)
-    setMotorSpeeds(0, 0);
-  else
+  if (wifi_ok)
     updateSpeedRamp();
+  else
+    setMotorSpeeds(0, 0);
 
   motorLeft.update();
   motorRight.update();
@@ -579,8 +522,8 @@ void resetTelemMsg() {
   telem_msg.battery_mv = 0;
   telem_msg.wifi_rssi_dbm = 0;
 }
-void spinIMU(uint64_t time_now_us) {
-  if ((time_now_us - imu_last_pub_us) < cfg.UROS_IMU_PUB_PERIOD_US)
+void spinIMU(unsigned long time_now_us) {
+  if ((time_now_us - imu_last_pub_us) < 10000)  // 10ms = 100Hz
     return;
 
   imu.read();
@@ -633,19 +576,12 @@ void error_loop(int n_blinks){
 
 void setup() {
 
-  // Pin 15: LOW = LiDAR off at boot (transistor active-high)
-  pinMode(15, OUTPUT);
-  digitalWrite(15, LOW);
-
-  // Silence buzzer immediately — active-low: HIGH = transistor off = silent
+  // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
-  /*digitalWrite(PIN_BUZZER, HIGH);
-  delay(2000);
-  digitalWrite(PIN_BUZZER, LOW);
-  delay(2000);
-  digitalWrite(PIN_BUZZER, HIGH);
-  delay(2000);
-  digitalWrite(PIN_BUZZER, LOW);*/
+
+  // RGB LED: white = ready
+  rgb_led.begin();
+  rgb_led.setColor(255, 255, 255, 30, true);
 
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
@@ -781,73 +717,23 @@ void setup() {
   setupLIDAR();
   setupADC();
   setupMotors();
-  //buzzer.begin();
-  Serial.println("Buzzer initialized");
-
-  // RGB LED before IMU (both share pin 48)
-  rgb_led.begin();
-  Serial.println("RGB LED initialized");
-
-  // Blue: connecting to WiFi
-  rgb_led.setColor(0, 80, 255, 30, true);
-  while(!initWiFi(cfg.ssid, cfg.pass));
-
-  // Transport must be set before ping
-  set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
-  delay(500);
-
-  // Amber blink: ping agent every 5 s, max 10 min
-  {
-    const unsigned long CHECK_INTERVAL_MS = 5000UL;
-    const unsigned long AGENT_TIMEOUT_MS = 30000UL;
-    Serial.println("Searching for micro-ROS agent...");
-    unsigned long last_check_ms = 0;
-    unsigned long last_blink_ms = millis();
-    unsigned long search_start_ms = millis();
-    bool led_on = true;
-    rgb_led.setColor(255, 80, 0, 30, true);
-
-    while (true) {
-      unsigned long now = millis();
-
-      if (now - search_start_ms >= AGENT_TIMEOUT_MS) {
-        Serial.println("Agent not found, restarting...");
-        delay(500);
-        ESP.restart();
-      }
-
-      if (now - last_blink_ms >= 800) {
-        led_on = !led_on;
-        rgb_led.setColor(255, 80, 0, 30, led_on);
-        last_blink_ms = now;
-      }
-
-      if (now - last_check_ms >= CHECK_INTERVAL_MS) {
-        last_check_ms = now;
-        Serial.print("Pinging agent... ");
-        if (rmw_uros_ping_agent(2000, 1) == RMW_RET_OK) {
-          Serial.println("found!");
-          break;
-        }
-        Serial.println("no response");
-      }
-      delay(10);
-    }
-  }
-
-  setupMicroROS(&twist_sub_callback);
-
-  // Green: micro-ROS connected — show briefly before handing pin 48 to IMU
-  rgb_led.setColor(0, 200, 0, 30, true);
-  delay(2000);
-
-  // Initialize IMU last — takes over pin 48 (I2C SDA), LED stops here
+  // Initialize IMU
   if (!imu.begin(48, 47, 400000)) {
     Serial.println("Error initializing IMU6500");
   } else {
     Serial.println("IMU6500 initialized successfully");
   }
-  rgb_led.turnOff(); // pin 48 now belongs to I2C
+  //buzzer.begin();
+  Serial.println("Buzzer initialized");
+  Serial.println("RGB LED initialized");;
+
+
+  while(!initWiFi(cfg.ssid, cfg.pass));
+
+  set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
+  delay(2000);
+
+  setupMicroROS(&twist_sub_callback);
 
   //pubDiagnostics();
 
@@ -868,5 +754,8 @@ void setup() {
   //pubDiagnostics();
   
   resetTelemMsg();
-  digitalWrite(15, LOW);
+  
+  startLIDAR();
+    //blink_error_code(cfg.ERR_LIDAR_START);
+    //error_loop(cfg.ERR_LIDAR_START);
 }

@@ -5,14 +5,13 @@ robot:
   name: kalmanbot_01
   web: KALMANBOT_01.AI
   use_web: false 
-  wifi:
-    ssid: kalman-robot
-    password: kalman2024
-    #static_ip: 192.168.4.100
-    #gateway: 192.168.4.1
-  computer: 
-    ip: 192.168.4.1
-    port: 8888
+  wifi: 
+    ssid: Red
+    password: 12345678
+  computer:
+    ip: 10.124.222.78
+    port: 8889
+    domain_id: 21
 board:
   manufacturer: kalmanrobotics.io
   model: KALMAN ESP32-S3-DevKitC-1
