@@ -116,6 +116,7 @@ public:
   String robot_web = "N/A";
   bool use_web = true;
   unsigned int dest_port = 8888;
+  uint8_t ros_domain_id = 0;
   float base_wheel_dia = 0.043f;
   float base_wheel_accel_max = 1.0;
   float base_wheel_track = 0.105043f;
@@ -256,11 +257,15 @@ public:
           return "Space after colon expected in line " + String(line);
         }
         String param_value = s.substring(colon_idx+2);
+        int hash_idx = param_value.indexOf('#');
+        if (hash_idx >= 0)
+          param_value = param_value.substring(0, hash_idx);
         //Serial.println("param_value=" + param_value);
         set_param(level_name, param_value, levels);
       }
     }
 
+    deriveFromRobotName();
     return "";
   }
 
@@ -520,6 +525,20 @@ public:
     float ang_component = speed_ang_z*base_wheel_track*0.5f;
     *speed_right = speed_lin_x + ang_component;
     *speed_left  = speed_lin_x - ang_component;
+  }
+
+  // Deriva puerto y ROS domain ID desde el número al final del nombre del robot.
+  // kalmanbot_01 -> puerto 8881, domain 1
+  // kalmanbot_15 -> puerto 8895, domain 15
+  void deriveFromRobotName() {
+    int underscore = robot_name.lastIndexOf('_');
+    if (underscore < 0 || underscore >= (int)robot_name.length() - 1)
+      return;
+    int kit_num = robot_name.substring(underscore + 1).toInt();
+    if (kit_num < 1 || kit_num > 15)
+      return;
+    dest_port = 8880 + kit_num;
+    ros_domain_id = (uint8_t) kit_num;
   }
 
   String trimString(String s) {

@@ -211,6 +211,14 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     Serial.println(rc);
     return rc;
   }
+  rc = rcl_init_options_set_domain_id(&init_options, cfg.ros_domain_id);
+  if (rc != RCL_RET_OK) {
+    Serial.print("rcl_init_options_set_domain_id(");
+    Serial.print(cfg.ros_domain_id);
+    Serial.print(") error ");
+    Serial.println(rc);
+    return rc;
+  }
   rmw_init_options_t* rmw_options = rcl_init_options_get_rmw_init_options(&init_options);
 
   // https://github.com/micro-ROS/micro-ROS-demos/blob/iron/rclc/autodiscover_agent/main.c

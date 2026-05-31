@@ -38,21 +38,26 @@ kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 
-unsigned long telem_prev_pub_time_us = 0;
-unsigned long ping_prev_pub_time_us = 0;
-unsigned long ros_params_update_prev_time_us = 0;
-unsigned long imu_last_pub_us = 0;
+uint64_t telem_prev_pub_time_us = 0;
+uint64_t ping_prev_pub_time_us = 0;
+uint64_t ros_params_update_prev_time_us = 0;
+uint64_t imu_last_pub_us = 0;
 
-unsigned long ramp_duration_us = 0;
-unsigned long ramp_start_time_us = 0;
+uint64_t ramp_duration_us = 0;
+uint64_t ramp_start_time_us = 0;
 float ramp_start_rpm_right = 0;
 float ramp_start_rpm_left = 0;
 float ramp_target_rpm_right = 0;
 float ramp_target_rpm_left = 0;
 bool ramp_enabled = true;
 
-unsigned long stat_sum_spin_telem_period_us = 0;
-unsigned long stat_max_spin_telem_period_us = 0;
+uint64_t stat_sum_spin_telem_period_us = 0;
+uint64_t stat_max_spin_telem_period_us = 0;
+uint64_t last_cmd_vel_us = 0;
+
+static const float CMD_VEL_MAX_LIN  = 0.12f;
+static const float CMD_VEL_MAX_ANG  = 1.0f;
+static const uint64_t CMD_VEL_TIMEOUT_US = 1000000ULL; // 1 s sin cmd_vel -> parar
 
 #if ESP_IDF_VERSION_MAJOR >= 5
   #error Espressif IDF v5 is not yet supported
@@ -60,11 +65,11 @@ unsigned long stat_max_spin_telem_period_us = 0;
 
 // -------- FUNCTION PROTOYPES --------
 void updateSpeedRamp();
-void publishTelem(unsigned long step_time_us);
-void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right, float joint_pos_delta_left);
+void publishTelem(uint64_t step_time_us);
+void calcOdometry(uint64_t step_time_us, float joint_pos_delta_right, float joint_pos_delta_left);
 void spinTelem(bool force_pub);
 void spinPing();
-void spinIMU(unsigned long time_now_us);
+void spinIMU(uint64_t time_now_us);
 void updateROSParams();
 void setMotorSpeeds(float rpm_left, float rpm_right);
 bool isBootButtonPressed(uint8_t sec);
@@ -82,8 +87,10 @@ void twist_sub_callback(const void *msgin);
 void twist_sub_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
 
-  float target_speed_lin_x = msg->linear.x;
-  float target_speed_ang_z = msg->angular.z;
+  last_cmd_vel_us = esp_timer_get_time();
+
+  float target_speed_lin_x = constrain(msg->linear.x, -CMD_VEL_MAX_LIN, CMD_VEL_MAX_LIN);
+  float target_speed_ang_z = constrain(msg->angular.z, -CMD_VEL_MAX_ANG, CMD_VEL_MAX_ANG);
   //Serial.print("linear.x ");
   //Serial.print(msg->linear.x);
   //Serial.print(", angular.z ");
@@ -190,8 +197,8 @@ void updateSpeedRamp() {
     return;
   }
 
-  unsigned long time_now_us = esp_timer_get_time();
-  unsigned long ramp_elapsed_time_us = time_now_us - ramp_start_time_us;
+  uint64_t time_now_us = esp_timer_get_time();
+  uint64_t ramp_elapsed_time_us = time_now_us - ramp_start_time_us;
 
   float rpm_right;
   float rpm_left;
@@ -263,8 +270,8 @@ static inline bool initWiFi(const String & ssid, const String & passw) {
 
 void spinTelem(bool force_pub) {
   static int telem_pub_count = 0;
-  unsigned long time_now_us = esp_timer_get_time();
-  unsigned long step_time_us = time_now_us - telem_prev_pub_time_us;
+  uint64_t time_now_us = esp_timer_get_time();
+  uint64_t step_time_us = time_now_us - telem_prev_pub_time_us;
 
   if (!force_pub && (step_time_us < cfg.UROS_TELEM_PUB_PERIOD_US))
     return;
@@ -312,7 +319,7 @@ void spinTelem(bool force_pub) {
   }
 }
 
-void publishTelem(unsigned long step_time_us) {
+void publishTelem(uint64_t step_time_us) {
   struct timespec tv = {0, 0};
   clock_gettime(CLOCK_REALTIME, &tv);
   telem_msg.stamp.sec = tv.tv_sec;
@@ -361,7 +368,7 @@ void publishTelem(unsigned long step_time_us) {
   telem_msg.seq++;
 }
 
-void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right,
+void calcOdometry(uint64_t step_time_us, float joint_pos_delta_right,
   float joint_pos_delta_left) {
 
   if (step_time_us == 0)
@@ -406,14 +413,27 @@ void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right,
 }
 
 void spinPing() {
-  unsigned long time_now_us = esp_timer_get_time();
-  unsigned long step_time_us = time_now_us - ping_prev_pub_time_us;
-  
-  if (step_time_us >= cfg.UROS_PING_PUB_PERIOD_US) {
-    // timeout_ms, attempts
-    rmw_uros_ping_agent(1, 1); //rmw_ret_t rc =
-    ping_prev_pub_time_us = time_now_us;
-    //Serial.println(rc == RCL_RET_OK ? "Ping OK" : "Ping error");
+  static uint8_t ping_fail_count = 0;
+  uint64_t time_now_us = (uint64_t)esp_timer_get_time();
+
+  uint64_t step_time_us = time_now_us - ping_prev_pub_time_us;
+  if (step_time_us < cfg.UROS_PING_PUB_PERIOD_US)
+    return;
+  ping_prev_pub_time_us = time_now_us;
+
+  rmw_ret_t rc = rmw_uros_ping_agent(200, 1);
+  if (rc != RMW_RET_OK) {
+    Serial.print("Ping failed (");
+    Serial.print(++ping_fail_count);
+    Serial.println("/3)");
+    if (ping_fail_count >= 3) {
+      Serial.println("micro-ROS agent lost, restarting...");
+      setMotorSpeeds(0, 0);
+      delay(500);
+      ESP.restart();
+    }
+  } else {
+    ping_fail_count = 0;
   }
 }
 
@@ -427,8 +447,8 @@ void updateROSParams() {
     }
   }
 
-  unsigned long time_now_us = esp_timer_get_time();
-  unsigned long step_time_us = time_now_us - ros_params_update_prev_time_us;
+  uint64_t time_now_us = (uint64_t)esp_timer_get_time();
+  uint64_t step_time_us = time_now_us - ros_params_update_prev_time_us;
   if (step_time_us >= cfg.UROS_PARAMS_UPDATE_PERIOD_US) {
 
     rcl_ret_t ret = updateROSRealTimeParams();
@@ -464,10 +484,20 @@ void loop() {
   }
 
   updateROSParams();
-  unsigned long time_now_us = esp_timer_get_time();
+  uint64_t time_now_us = (uint64_t)esp_timer_get_time();
   spinIMU(time_now_us);
   spinTelem(false);
   spinPing();
+
+  // Detener motores si no llega cmd_vel en 1 segundo
+  if (last_cmd_vel_us > 0 && (time_now_us - last_cmd_vel_us) > CMD_VEL_TIMEOUT_US) {
+    ramp_target_rpm_right = 0;
+    ramp_target_rpm_left = 0;
+    ramp_start_rpm_right = 0;
+    ramp_start_rpm_left = 0;
+    setMotorSpeeds(0, 0);
+    last_cmd_vel_us = 0;
+  }
 
   if (wifi_ok)
     updateSpeedRamp();
@@ -521,7 +551,7 @@ void resetTelemMsg() {
   telem_msg.battery_mv = 0;
   telem_msg.wifi_rssi_dbm = 0;
 }
-void spinIMU(unsigned long time_now_us) {
+void spinIMU(uint64_t time_now_us) {
   if ((time_now_us - imu_last_pub_us) < 10000)  // 10ms = 100Hz
     return;
 
@@ -633,6 +663,13 @@ void setup() {
     } else
       Serial.println("loaded OK");
   }
+
+  Serial.print("Robot: ");
+  Serial.print(cfg.robot_name);
+  Serial.print(" | ROS domain: ");
+  Serial.print(cfg.ros_domain_id);
+  Serial.print(" | Agent port: ");
+  Serial.println(cfg.dest_port);
 
   setPinMode(cfg.led_sys_gpio, OUTPUT);
   digiWrite(cfg.led_sys_gpio, HIGH, cfg.led_sys_invert);
