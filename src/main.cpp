@@ -605,12 +605,6 @@ void setup() {
   // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
 
-  // LiDAR power pin — apagado por defecto, se enciende via /lidar_power
-  if (cfg.lidar_gpio_power != 255) {
-    pinMode(cfg.lidar_gpio_power, OUTPUT);
-    digitalWrite(cfg.lidar_gpio_power, LOW);
-  }
-
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
   bool html_exists = false;
@@ -741,6 +735,12 @@ void setup() {
   cfg.board_manufacturer = ""; // free up a little memory
   cfg.board_model = "";
   cfg.board_version = "";
+
+  // LiDAR power pin — config ya cargado, apagado por defecto
+  if (cfg.lidar_gpio_power != 255) {
+    pinMode(cfg.lidar_gpio_power, OUTPUT);
+    digitalWrite(cfg.lidar_gpio_power, LOW);
+  }
 
   setupLIDAR();
   setupADC();
