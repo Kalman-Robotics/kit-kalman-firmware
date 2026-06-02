@@ -596,13 +596,12 @@ void error_loop(int n_blinks){
 
 void setup() {
 
-  // TEST: forzar GPIO 15 alto para verificar LiDAR power
-  pinMode(15, OUTPUT);
-  digitalWrite(15, HIGH);
-  while(true) { delay(1000); } // STOP aqui para medir GPIO 15
-
   // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
+
+  // LiDAR power pin — apagado por defecto, se enciende via /lidar_power
+  pinMode(15, OUTPUT);
+  digitalWrite(15, LOW);
 
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
