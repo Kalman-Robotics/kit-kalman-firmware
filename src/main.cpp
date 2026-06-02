@@ -274,8 +274,6 @@ void spinTelem(bool force_pub) {
   publishTelem(step_time_us);
   telem_prev_pub_time_us = time_now_us;
 
-  digiWrite(cfg.led_sys_gpio, !digiRead(cfg.led_sys_gpio, cfg.led_sys_invert),
-    cfg.led_sys_invert);
   //if (++telem_pub_count % 5 == 0) {
   //  Serial.print("RPM L ");
   //  Serial.print(motorLeft.getCurrentRPM());
@@ -422,10 +420,16 @@ void spinPing() {
     if (ping_fail_count >= 3) {
       Serial.println("micro-ROS agent lost, restarting...");
       setMotorSpeeds(0, 0);
-      delay(500);
+      for (int i = 0; i < 6; i++) {
+        rgb_led.setColor(255, 0, 0, 30, i % 2 == 0);
+        delay(150);
+      }
       ESP.restart();
     }
+    rgb_led.setColor(255, 0, 0, 30, true); // Rojo fijo mientras falla
   } else {
+    if (ping_fail_count > 0)
+      rgb_led.setColor(0, 255, 0, 30, true); // Verde: recuperado
     ping_fail_count = 0;
   }
 }
@@ -589,9 +593,8 @@ void setup() {
   // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
 
-  // RGB LED: white = ready
   rgb_led.begin();
-  rgb_led.setColor(255, 255, 255, 30, true);
+  rgb_led.setColor(0, 0, 255, 30, true); // Azul: arrancando
 
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
@@ -738,12 +741,23 @@ void setup() {
   Serial.println("RGB LED initialized");;
 
 
-  while(!initWiFi(cfg.ssid, cfg.pass));
+  // Azul parpadeante: conectando WiFi
+  while(!initWiFi(cfg.ssid, cfg.pass)) {
+    static bool led_state = false;
+    rgb_led.setColor(0, 0, 255, 30, (led_state = !led_state));
+    delay(500);
+  }
+
+  // Amarillo parpadeante: buscando agente micro-ROS
+  rgb_led.setColor(255, 150, 0, 30, true);
 
   set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
   delay(2000);
 
   setupMicroROS(&twist_sub_callback);
+
+  // Verde fijo: agente conectado
+  rgb_led.setColor(0, 255, 0, 30, true);
 
   //pubDiagnostics();
 
