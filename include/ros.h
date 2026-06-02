@@ -385,7 +385,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   }
 
   rc = rclc_executor_init(&executor, &support.context,
-    RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 2, &allocator); // +1 for each subscriber
+    RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 3, &allocator); // +1 for each subscriber
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_executor_init(");
     Serial.print(") error ");
