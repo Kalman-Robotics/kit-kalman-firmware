@@ -296,7 +296,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   Serial.print("; ROS2 node /");
   Serial.println(cfg.robot_name.c_str());
 
-  rc = rclc_subscription_init_best_effort(&twist_sub, &node,
+  rc = rclc_subscription_init_default(&twist_sub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), cfg.UROS_CMD_VEL_TOPIC_NAME);
   if (rc != RCL_RET_OK) {
     Serial.print("rclc_subscription_init_best_effort(");
