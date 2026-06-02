@@ -308,7 +308,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     return rc;
   }
 
-  rc = rclc_subscription_init_default(&lidar_power_sub, &node,
+  rc = rclc_subscription_init_best_effort(&lidar_power_sub, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool), "/lidar_power");
   if (rc != RCL_RET_OK) {
       Serial.print("rclc_subscription_init_default(/lidar_power) error ");
