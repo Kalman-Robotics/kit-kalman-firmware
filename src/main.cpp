@@ -599,6 +599,7 @@ void setup() {
   // TEST: forzar GPIO 15 alto para verificar LiDAR power
   pinMode(15, OUTPUT);
   digitalWrite(15, HIGH);
+  while(true) { delay(1000); } // STOP aqui para medir GPIO 15
 
   // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
