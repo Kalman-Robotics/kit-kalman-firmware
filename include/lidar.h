@@ -112,18 +112,19 @@ void lidar_scan_point_callback(float angle_deg, float distance_mm, float quality
 
 void lidar_packet_callback(uint8_t * packet, uint16_t packet_length, bool scan_completed) {
   bool packet_sent = false;
-//  Serial.println('-');
   while (packet_length-- > 0) {
     if (nexus_msg.lds.size >= nexus_msg.lds.capacity) {
       spinTelem(true);
       packet_sent = true;
     }
-    nexus_msg.lds.data[nexus_msg.lds.size++] = *packet;
+    if (nexus_msg.lds.size < nexus_msg.lds.capacity) {
+      nexus_msg.lds.data[nexus_msg.lds.size++] = *packet;
+    }
     packet++;
   }
 
   if (scan_completed && !packet_sent && (nexus_msg.lds.size > 0))
-    spinTelem(true); // Opional, reduce lag a little
+    spinTelem(true);
 }
 
 void lidar_motor_pin_callback(float value, LDS::lds_pin_t lds_pin) {
