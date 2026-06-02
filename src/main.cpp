@@ -44,6 +44,9 @@ unsigned long ping_prev_pub_time_us = 0;
 unsigned long ros_params_update_prev_time_us = 0;
 unsigned long imu_last_pub_us = 0;
 
+static const uint64_t CMD_VEL_TIMEOUT_US = 1000000ULL; // 1 segundo
+unsigned long last_cmd_vel_us = 0;
+
 unsigned long ramp_duration_us = 0;
 unsigned long ramp_start_time_us = 0;
 float ramp_start_rpm_right = 0;
@@ -84,6 +87,7 @@ void twist_sub_callback(const void *msgin);
 
 void twist_sub_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
+  last_cmd_vel_us = esp_timer_get_time();
 
   float target_speed_lin_x = msg->linear.x;
   float target_speed_ang_z = msg->angular.z;
@@ -491,10 +495,19 @@ void loop() {
   spinControlStatus();
   spinPing();
 
-  if (wifi_ok)
-    updateSpeedRamp();
-  else
+  if (!wifi_ok) {
     setMotorSpeeds(0, 0);
+  } else if (last_cmd_vel_us > 0 &&
+             ((unsigned long)esp_timer_get_time() - last_cmd_vel_us) > CMD_VEL_TIMEOUT_US) {
+    ramp_target_rpm_right = 0;
+    ramp_target_rpm_left = 0;
+    ramp_start_rpm_right = 0;
+    ramp_start_rpm_left = 0;
+    setMotorSpeeds(0, 0);
+    last_cmd_vel_us = 0;
+  } else {
+    updateSpeedRamp();
+  }
 
   motorLeft.update();
   motorRight.update();
