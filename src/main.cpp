@@ -32,9 +32,9 @@
 
 #define PIN_BUZZER 10
 CONFIG cfg;
+RGBLedControl rgb_led(48);
 IMU6500 imu;
 BuzzerController buzzer(PIN_BUZZER);
-RGBLedControl rgb_led(48);
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t nexus_lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 
@@ -421,15 +421,11 @@ void spinPing() {
       Serial.println("micro-ROS agent lost, restarting...");
       setMotorSpeeds(0, 0);
       for (int i = 0; i < 6; i++) {
-        rgb_led.setColor(255, 0, 0, 30, i % 2 == 0);
         delay(150);
       }
       ESP.restart();
     }
-    rgb_led.setColor(255, 0, 0, 30, true); // Rojo fijo mientras falla
   } else {
-    if (ping_fail_count > 0)
-      rgb_led.setColor(0, 255, 0, 30, true); // Verde: recuperado
     ping_fail_count = 0;
   }
 }
@@ -593,9 +589,6 @@ void setup() {
   // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
 
-  rgb_led.begin();
-  rgb_led.setColor(0, 0, 255, 30, true); // Azul: arrancando
-
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
   bool html_exists = false;
@@ -730,25 +723,17 @@ void setup() {
   setupLIDAR();
   setupADC();
   setupMotors();
-  // Initialize IMU
-  if (!imu.begin(48, 47, 400000)) {
-    Serial.println("Error initializing IMU6500");
-  } else {
-    Serial.println("IMU6500 initialized successfully");
-  }
-  //buzzer.begin();
-  Serial.println("Buzzer initialized");
-  Serial.println("RGB LED initialized");;
 
-
-  // Azul parpadeante: conectando WiFi
+  // Azul parpadeante: conectando WiFi (IMU aún no iniciado, RGB libre)
+  rgb_led.begin();
+  rgb_led.setColor(0, 0, 255, 30, true);
   while(!initWiFi(cfg.ssid, cfg.pass)) {
     static bool led_state = false;
     rgb_led.setColor(0, 0, 255, 30, (led_state = !led_state));
     delay(500);
   }
 
-  // Amarillo parpadeante: buscando agente micro-ROS
+  // Amarillo fijo: buscando agente micro-ROS
   rgb_led.setColor(255, 150, 0, 30, true);
 
   set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
@@ -758,6 +743,17 @@ void setup() {
 
   // Verde fijo: agente conectado
   rgb_led.setColor(0, 255, 0, 30, true);
+  delay(1000);
+
+  // Apagar RGB — liberar GPIO 48 para el IMU
+  rgb_led.turnOff();
+
+  // Iniciar IMU ahora que el RGB está apagado
+  if (!imu.begin(48, 47, 400000)) {
+    Serial.println("Error initializing IMU6500");
+  } else {
+    Serial.println("IMU6500 initialized successfully");
+  }
 
   //pubDiagnostics();
 
