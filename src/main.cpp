@@ -313,6 +313,12 @@ void spinTelem(bool force_pub) {
 }
 
 void spinControlStatus() {
+  static unsigned long prev_time_us = 0;
+  unsigned long time_now_us = esp_timer_get_time();
+  if (time_now_us - prev_time_us < cfg.UROS_TELEM_PUB_PERIOD_US)
+    return;
+  prev_time_us = time_now_us;
+
   control_status_msg.r_current_speed   = motorRight.getCurrentRPM();
   control_status_msg.r_current_control = motorRight.getCurrentPWM();
   control_status_msg.r_current_error   = motorRight.getPIDError();
