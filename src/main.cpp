@@ -596,6 +596,10 @@ void error_loop(int n_blinks){
 
 void setup() {
 
+  // TEST: forzar GPIO 15 alto para verificar LiDAR power
+  pinMode(15, OUTPUT);
+  digitalWrite(15, HIGH);
+
   // Silence buzzer — active-low: INPUT = high impedance = silent
   pinMode(PIN_BUZZER, INPUT);
 
