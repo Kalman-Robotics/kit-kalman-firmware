@@ -35,6 +35,7 @@ CONFIG cfg;
 RGBLedControl rgb_led(48);
 IMU6500 imu;
 BuzzerController buzzer(PIN_BUZZER);
+kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
 uint8_t nexus_lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 
@@ -343,9 +344,10 @@ void publishTelem(unsigned long step_time_us) {
   nexus_msg.wifi_rssi_dbm = (int8_t) rssi_dbm;
 
   for (unsigned char i = 0; i < MOTOR_COUNT; i++) {
-    float pos = i == 0 ? motorLeft.getShaftAngle() : motorRight.getShaftAngle();
-    joint_pos_delta[i] = pos - joint_prev_pos[i];
-    joint_prev_pos[i] = pos;
+    joint[i].pos = i == 0 ? motorLeft.getShaftAngle() : motorRight.getShaftAngle();
+    joint_pos_delta[i] = joint[i].pos - joint_prev_pos[i];
+    joint[i].vel = joint_pos_delta[i] / step_time;
+    joint_prev_pos[i] = joint[i].pos;
   }
 
   calcOdometry(step_time_us, joint_pos_delta[0], joint_pos_delta[1]);
@@ -527,6 +529,14 @@ void resetNexusMsg() {
   nexus_msg.dist_left_mm = 0;
   nexus_msg.dist_back_mm = 0;
   nexus_msg.dist_right_mm = 0;
+  nexus_msg.joint.data = joint;
+  nexus_msg.joint.capacity = MOTOR_COUNT;
+  nexus_msg.joint.size = MOTOR_COUNT;
+  for (int i = 0; i < MOTOR_COUNT; i++) {
+    joint[i].pos = 0;
+    joint[i].vel = 0;
+    joint_prev_pos[i] = 0;
+  }
   nexus_msg.lds.data = nexus_lidar_buf;
   nexus_msg.lds.capacity = cfg.LIDAR_BUF_LEN;
   nexus_msg.lds.size = 0;
