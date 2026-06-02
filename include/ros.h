@@ -264,12 +264,16 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   }
 
   while(true) {
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi lost while connecting to agent, restarting...");
+      delay(500);
+      ESP.restart();
+    }
     digitalWrite(cfg.led_sys_gpio, !digitalRead(cfg.led_sys_gpio));
     Serial.print(F("Connecting to Micro-ROS agent "));
     Serial.print(cfg.dest_ip);
     Serial.print(" ... ");
-  
-    //rclc_support_init(&support, 0, NULL, &allocator);
+
     rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
     if (rc != RCL_RET_OK) {
       Serial.println();
