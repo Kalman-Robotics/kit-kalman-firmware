@@ -37,7 +37,7 @@ IMU6500 imu;
 BuzzerController buzzer(PIN_BUZZER);
 kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
-uint8_t nexus_lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
+uint8_t nexus_lidar_buf[CONFIG::LIDAR_BUF_LEN] = {0};
 
 unsigned long telem_prev_pub_time_us = 0;
 unsigned long ping_prev_pub_time_us = 0;
