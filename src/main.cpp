@@ -88,8 +88,8 @@ void twist_sub_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   last_cmd_vel_us = esp_timer_get_time();
 
-  float target_speed_lin_x = msg->linear.x;
-  float target_speed_ang_z = msg->angular.z;
+  float target_speed_lin_x = constrain(msg->linear.x, -0.15f, 0.15f);
+  float target_speed_ang_z = constrain(msg->angular.z, -1.0f, 1.0f);
   //Serial.print("linear.x ");
   //Serial.print(msg->linear.x);
   //Serial.print(", angular.z ");
