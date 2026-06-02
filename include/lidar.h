@@ -79,14 +79,7 @@ void lidar_scan_point_callback(float angle_deg, float distance_mm, float quality
     nexus_msg.dist_left_mm  = sector_min_mm[1] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[1];
     nexus_msg.dist_back_mm  = sector_min_mm[2] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[2];
     nexus_msg.dist_right_mm = sector_min_mm[3] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[3];
-    static uint32_t scan_count = 0;
-    if (++scan_count % 10 == 0) {
-      Serial.print("LiDAR scan #"); Serial.print(scan_count);
-      Serial.print(" F:"); Serial.print(nexus_msg.dist_front_mm);
-      Serial.print(" L:"); Serial.print(nexus_msg.dist_left_mm);
-      Serial.print(" B:"); Serial.print(nexus_msg.dist_back_mm);
-      Serial.print(" R:"); Serial.println(nexus_msg.dist_right_mm);
-    }
+
     sector_min_mm[0] = sector_min_mm[1] = sector_min_mm[2] = sector_min_mm[3] = UINT32_MAX;
     return;
   }
