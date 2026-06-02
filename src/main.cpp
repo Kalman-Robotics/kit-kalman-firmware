@@ -44,7 +44,6 @@ unsigned long ping_prev_pub_time_us = 0;
 unsigned long ros_params_update_prev_time_us = 0;
 unsigned long imu_last_pub_us = 0;
 
-static const uint64_t CMD_VEL_TIMEOUT_US = 1000000ULL; // 1 segundo
 unsigned long last_cmd_vel_us = 0;
 
 unsigned long ramp_duration_us = 0;
@@ -498,7 +497,7 @@ void loop() {
   if (!wifi_ok) {
     setMotorSpeeds(0, 0);
   } else if (last_cmd_vel_us > 0 &&
-             ((unsigned long)esp_timer_get_time() - last_cmd_vel_us) > CMD_VEL_TIMEOUT_US) {
+             ((unsigned long)esp_timer_get_time() - last_cmd_vel_us) > cfg.CMD_VEL_TIMEOUT_US) {
     ramp_target_rpm_right = 0;
     ramp_target_rpm_left = 0;
     ramp_start_rpm_right = 0;
