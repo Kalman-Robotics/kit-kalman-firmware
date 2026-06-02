@@ -600,8 +600,10 @@ void setup() {
   pinMode(PIN_BUZZER, INPUT);
 
   // LiDAR power pin — apagado por defecto, se enciende via /lidar_power
-  pinMode(15, OUTPUT);
-  digitalWrite(15, LOW);
+  if (cfg.lidar_gpio_power != 255) {
+    pinMode(cfg.lidar_gpio_power, OUTPUT);
+    digitalWrite(cfg.lidar_gpio_power, LOW);
+  }
 
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);

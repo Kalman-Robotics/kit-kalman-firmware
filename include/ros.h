@@ -193,18 +193,12 @@ rcl_ret_t syncRosTime() {
 
 void lidar_power_sub_callback(const void *msgin) {
   const std_msgs__msg__Bool * msg = (const std_msgs__msg__Bool *)msgin;
-  Serial.print("/lidar_power received: ");
-  Serial.println(msg->data ? "ON" : "OFF");
-  digitalWrite(15, msg->data ? HIGH : LOW);
-  Serial.print("GPIO 15 set to ");
-  Serial.println(msg->data ? "HIGH" : "LOW");
-  if (msg->data) {
+  if (cfg.lidar_gpio_power != 255)
+    digitalWrite(cfg.lidar_gpio_power, msg->data ? HIGH : LOW);
+  if (msg->data)
     lidar->start();
-    Serial.println("lidar->start() called");
-  } else {
+  else
     lidar->stop();
-    Serial.println("lidar->stop() called");
-  }
 }
 
 // void led_sub_callback(const void *msgin) {

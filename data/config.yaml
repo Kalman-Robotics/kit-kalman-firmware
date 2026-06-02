@@ -20,6 +20,7 @@ lidar:
   gpio:
     tx: 37 # PCB RX -> LD19 TX
     rx: 17 # not used for LD19
+    power: 15
 led:
   system: 
     driver:

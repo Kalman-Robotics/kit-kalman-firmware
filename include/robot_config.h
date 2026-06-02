@@ -152,6 +152,7 @@ public:
   uint8_t lidar_gpio_en = 255;
   uint8_t lidar_gpio_rx = 255;
   uint8_t lidar_gpio_tx = 255;
+  uint8_t lidar_gpio_power = 255;
   float lidar_scan_freq_target = 0;
   uint8_t mot_left_enc_gpio_a_fg = 255;
   uint8_t mot_left_enc_gpio_b = 255;
@@ -347,6 +348,8 @@ public:
               lidar_gpio_pwm = (uint8_t) pvalue.toInt();
             else if (lname[2] == "en")
               lidar_gpio_en = (uint8_t) pvalue.toInt();
+            else if (lname[2] == "power")
+              lidar_gpio_power = (uint8_t) pvalue.toInt();
           }
           break;
         case 4:
