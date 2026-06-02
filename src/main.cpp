@@ -497,7 +497,7 @@ void loop() {
   if (!wifi_ok) {
     setMotorSpeeds(0, 0);
   } else if (last_cmd_vel_us > 0 &&
-             ((unsigned long)esp_timer_get_time() - last_cmd_vel_us) > cfg.CMD_VEL_TIMEOUT_US) {
+             ((unsigned long)esp_timer_get_time() - last_cmd_vel_us) > cfg.cmd_vel_timeout_us) {
     ramp_target_rpm_right = 0;
     ramp_target_rpm_left = 0;
     ramp_start_rpm_right = 0;

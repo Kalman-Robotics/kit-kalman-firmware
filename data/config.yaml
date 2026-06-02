@@ -78,6 +78,8 @@ lidar:
       target: 10.0
 monitor:
   baud: 115200
+cmd_vel:
+  timeout: 0.25
 base:
   wheel:
     track: 0.086

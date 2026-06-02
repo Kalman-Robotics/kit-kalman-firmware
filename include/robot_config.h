@@ -72,7 +72,6 @@ public:
   //static constexpr char * UROS_DIAG_TOPIC_NAME = (char *)"diagnostics";
   static constexpr char * UROS_CMD_VEL_TOPIC_NAME = (char *)"cmd_vel";
   static const uint32_t UROS_PING_PUB_PERIOD_US = 1*1000*1000;  // 1s × 3 fails = ~3s to detect agent loss
-  static const uint32_t CMD_VEL_TIMEOUT_US = 250*1000;          // 0.25s sin cmd_vel → parar motores
   static const uint32_t UROS_TELEM_PUB_PERIOD_US = 50*1000;   // 20 Hz
   static const uint32_t UROS_IMU_PUB_PERIOD_US   = 10*1000;   // 100 Hz
   static const uint32_t UROS_TIME_SYNC_TIMEOUT_MS = 1000;
@@ -123,6 +122,7 @@ public:
   unsigned int dest_port = 8888;
   float base_wheel_dia = 0.043f;
   float base_wheel_accel_max = 1.0;
+  uint32_t cmd_vel_timeout_us = 250*1000;
   float base_wheel_track = 0.105043f;
   uint8_t led_sys_gpio = UNDEFINED_GPIO;
   uint8_t led_sys_invert = false;
@@ -374,6 +374,11 @@ public:
             monitor_gpio_tx = (uint8_t) pvalue.toInt();
           break;
       }
+      return;
+    }
+
+    if (nlevels == 2 && lname[0] == "cmd_vel" && lname[1] == "timeout") {
+      cmd_vel_timeout_us = (uint32_t)(pvalue.toFloat() * 1e6);
       return;
     }
 
