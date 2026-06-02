@@ -500,10 +500,14 @@ void loop() {
              ((unsigned long)esp_timer_get_time() - last_cmd_vel_us) > cfg.cmd_vel_timeout_us) {
     ramp_target_rpm_right = 0;
     ramp_target_rpm_left = 0;
-    ramp_start_rpm_right = 0;
-    ramp_start_rpm_left = 0;
-    setMotorSpeeds(0, 0);
+    ramp_start_rpm_right = motorRight.getTargetRPM();
+    ramp_start_rpm_left = motorLeft.getTargetRPM();
+    ramp_start_time_us = esp_timer_get_time();
+    ramp_duration_us = cfg.speed_diff_to_us *
+      max(abs(cfg.rpm_to_speed(ramp_start_rpm_right)),
+          abs(cfg.rpm_to_speed(ramp_start_rpm_left)));
     last_cmd_vel_us = 0;
+    updateSpeedRamp();
   } else {
     updateSpeedRamp();
   }
