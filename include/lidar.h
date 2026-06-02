@@ -18,11 +18,11 @@
 #include "robot_config.h"
 #include "util.h"
 #include <micro_ros_kaia.h>
-#include <kalman_interfaces/msg/kaiaai_telemetry2.h>
+#include <kalman_interfaces/msg/nexus_telemetry.h>
 #include <HardwareSerial.h>
 
 extern CONFIG cfg;
-extern kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
+extern kalman_interfaces__msg__NexusTelemetry nexus_msg;
 LDS *lidar;
 HardwareSerial LdSerial(2);
 
@@ -68,49 +68,60 @@ int lidar_serial_read_callback() {
   return LdSerial.read();
 }
 
+// Sectores: frente=0°±20°, izquierda=90°±20°, atrás=180°±20°, derecha=270°±20°
+static uint32_t sector_min_mm[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
 void lidar_scan_point_callback(float angle_deg, float distance_mm, float quality,
   bool scan_completed) {
-/*
-  static int i = 0;
 
-  if ((i++ % 20 == 0) || scan_completed) {
-    //Serial.print(i);
-    //Serial.print('\t');
-    Serial.print(angle_deg);
-    Serial.print('\t');
-    Serial.print(distance_mm);
-    if (scan_completed) {
-      Serial.print('\t');
-      Serial.println(millis());
-    } else
-      Serial.println();
+  if (scan_completed) {
+    nexus_msg.dist_front_mm = sector_min_mm[0] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[0];
+    nexus_msg.dist_left_mm  = sector_min_mm[1] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[1];
+    nexus_msg.dist_back_mm  = sector_min_mm[2] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[2];
+    nexus_msg.dist_right_mm = sector_min_mm[3] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[3];
+    sector_min_mm[0] = sector_min_mm[1] = sector_min_mm[2] = sector_min_mm[3] = UINT32_MAX;
+    return;
   }
-*/
-/*
-  if (scan_completed)
-    Serial.println();
-  
-  Serial.print(angle_deg);
-  Serial.print('\t');
-  Serial.print(distance_mm);
-  Serial.print('\t');
-  Serial.println(quality);
-*/
+
+  if (distance_mm <= 0 || quality <= 0)
+    return;
+
+  uint32_t d = (uint32_t)distance_mm;
+  // Normalizar ángulo a 0..360
+  if (angle_deg < 0) angle_deg += 360.0f;
+  if (angle_deg >= 360.0f) angle_deg -= 360.0f;
+
+  // Frente: 340..360 y 0..20
+  if (angle_deg >= 340.0f || angle_deg <= 20.0f) {
+    if (d < sector_min_mm[0]) sector_min_mm[0] = d;
+  }
+  // Izquierda: 70..110
+  else if (angle_deg >= 70.0f && angle_deg <= 110.0f) {
+    if (d < sector_min_mm[1]) sector_min_mm[1] = d;
+  }
+  // Atrás: 160..200
+  else if (angle_deg >= 160.0f && angle_deg <= 200.0f) {
+    if (d < sector_min_mm[2]) sector_min_mm[2] = d;
+  }
+  // Derecha: 250..290
+  else if (angle_deg >= 250.0f && angle_deg <= 290.0f) {
+    if (d < sector_min_mm[3]) sector_min_mm[3] = d;
+  }
 }
 
 void lidar_packet_callback(uint8_t * packet, uint16_t packet_length, bool scan_completed) {
   bool packet_sent = false;
 //  Serial.println('-');
   while (packet_length-- > 0) {
-    if (telem_msg.lds.size >= telem_msg.lds.capacity) {
+    if (nexus_msg.lds.size >= nexus_msg.lds.capacity) {
       spinTelem(true);
       packet_sent = true;
     }
-    telem_msg.lds.data[telem_msg.lds.size++] = *packet;
+    nexus_msg.lds.data[nexus_msg.lds.size++] = *packet;
     packet++;
   }
 
-  if (scan_completed && !packet_sent && (telem_msg.lds.size > 0))
+  if (scan_completed && !packet_sent && (nexus_msg.lds.size > 0))
     spinTelem(true); // Opional, reduce lag a little
 }
 

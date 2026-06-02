@@ -71,7 +71,7 @@ public:
   static constexpr char * UROS_LOG_TOPIC_NAME = (char *)"rosout";
   //static constexpr char * UROS_DIAG_TOPIC_NAME = (char *)"diagnostics";
   static constexpr char * UROS_CMD_VEL_TOPIC_NAME = (char *)"cmd_vel";
-  static const uint32_t UROS_PING_PUB_PERIOD_US = 10*1000*1000;  // 2s × 3 fails = ~6s to detect agent loss
+  static const uint32_t UROS_PING_PUB_PERIOD_US = 1*1000*1000;  // 1s × 3 fails = ~3s to detect agent loss
   static const uint32_t UROS_TELEM_PUB_PERIOD_US = 50*1000;   // 20 Hz
   static const uint32_t UROS_IMU_PUB_PERIOD_US   = 10*1000;   // 100 Hz
   static const uint32_t UROS_TIME_SYNC_TIMEOUT_MS = 1000;

@@ -21,7 +21,8 @@
 #include <rclc/executor.h>
 #include <rclc_parameter/rclc_parameter.h>
 //#include <rmw_microros/discovery.h>
-#include <kalman_interfaces/msg/kaiaai_telemetry2.h>
+#include <kalman_interfaces/msg/nexus_telemetry.h>
+#include <kalman_interfaces/msg/control_status.h>
 #include <kalman_interfaces/msg/imu_data.h>
 #include <geometry_msgs/msg/twist.h>
 //#include <diagnostic_msgs/msg/diagnostic_array.h>
@@ -47,7 +48,8 @@ bool ros_config_params_changed = false;
 bool suppress_param_log_print = false;
 
 // ----- PUBLISHERS -----
-rcl_publisher_t telem_pub;
+rcl_publisher_t nexus_telem_pub;
+rcl_publisher_t control_status_pub;
 rcl_publisher_t log_pub;
 rcl_publisher_t imu_pub;
 //rcl_publisher_t diag_pub;
@@ -57,7 +59,8 @@ rcl_subscription_t buzzer_sub;
 rcl_subscription_t lidar_power_sub;
 // rcl_subscription_t led_sub;
 // ----- MESSAGES -----
-kalman_interfaces__msg__KaiaaiTelemetry2 telem_msg;
+kalman_interfaces__msg__NexusTelemetry nexus_msg;
+kalman_interfaces__msg__ControlStatus control_status_msg;
 geometry_msgs__msg__Twist twist_msg;
 kalman_interfaces__msg__ImuData imu_msg;
 kalman_interfaces__msg__Buzzer buzzer_msg;
@@ -248,7 +251,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
 
   uint32_t client_key = mac[1]<<(3*8) | mac[2]<<(2*8) | mac[3]<<(1*8) | mac[4];
   client_key = client_key<<(8-2) | mac[5]>>2;  // TODO multiple bots
-  rc = rcl_init_options_set_domain_id(&init_options, 20);
+  rc = rcl_init_options_set_domain_id(&init_options, cfg.ros_domain_id);
   if (rc != RCL_RET_OK) {
     Serial.print(F("rcl_init_options_set_domain_id() error "));
     Serial.println(rc);
@@ -331,12 +334,18 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   //   return rc;
   // }
 
-  rc = rclc_publisher_init_best_effort(&telem_pub, &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, KaiaaiTelemetry2), cfg.UROS_TELEM_TOPIC_NAME);
+  rc = rclc_publisher_init_best_effort(&nexus_telem_pub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, NexusTelemetry), "/telemetry");
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_publisher_init_best_effort(");
-    Serial.print(cfg.UROS_TELEM_TOPIC_NAME);
-    Serial.print(") error ");
+    Serial.print("rclc_publisher_init_best_effort(/nexus_telemetry) error ");
+    Serial.println(rc);
+    return rc;
+  }
+
+  rc = rclc_publisher_init_best_effort(&control_status_pub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, ControlStatus), "/control_status");
+  if (rc != RCL_RET_OK) {
+    Serial.print("rclc_publisher_init_best_effort(/control_status) error ");
     Serial.println(rc);
     return rc;
   }

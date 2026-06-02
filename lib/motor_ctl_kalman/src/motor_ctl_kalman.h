@@ -44,6 +44,7 @@ class MotorController {
     float getCurrentPWM();
     float getCurrentRPM();
     float getTargetRPM();
+    float getPIDError() { return targetRPM - measuredRPM; }
     float getMaxRPM();
     float getEncoderTPR();
     float getEncoderPPR();

@@ -35,9 +35,8 @@ CONFIG cfg;
 IMU6500 imu;
 BuzzerController buzzer(PIN_BUZZER);
 RGBLedControl rgb_led(48);
-kalman_interfaces__msg__JointPosVel joint[MOTOR_COUNT];
 float joint_prev_pos[MOTOR_COUNT] = {0};
-uint8_t lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
+uint8_t nexus_lidar_buf[cfg.LIDAR_BUF_LEN] = {0};
 
 unsigned long telem_prev_pub_time_us = 0;
 unsigned long ping_prev_pub_time_us = 0;
@@ -64,12 +63,14 @@ void updateSpeedRamp();
 void publishTelem(unsigned long step_time_us);
 void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right, float joint_pos_delta_left);
 void spinTelem(bool force_pub);
+void spinControlStatus();
 void spinPing();
 void spinIMU(unsigned long time_now_us);
 void updateROSParams();
 void setMotorSpeeds(float rpm_left, float rpm_right);
 bool isBootButtonPressed(uint8_t sec);
 void resetTelemMsg();
+void resetNexusMsg();
 void setupLIDAR();
 void setupADC();
 void setupMotors();
@@ -304,8 +305,7 @@ void spinTelem(bool force_pub) {
     s = s + String(motorLeft.getCurrentRPM()) + " ";
     s = s + String(motorRight.getCurrentRPM());
 
-    s = s + ", battery " + String(telem_msg.battery_mv*0.001f) + "V";
-    s = s + ", RSSI " + String(telem_msg.wifi_rssi_dbm) + "dBm";
+    s = s + ", RSSI " + String(nexus_msg.wifi_rssi_dbm) + "dBm";
     printlnNB(s);
 
     stat_sum_spin_telem_period_us = 0;
@@ -313,11 +313,28 @@ void spinTelem(bool force_pub) {
   }
 }
 
+void spinControlStatus() {
+  control_status_msg.r_current_speed   = motorRight.getCurrentRPM();
+  control_status_msg.r_current_control = motorRight.getCurrentPWM();
+  control_status_msg.r_current_error   = motorRight.getPIDError();
+  control_status_msg.r_setpoint        = motorRight.getTargetRPM();
+  control_status_msg.l_current_speed   = motorLeft.getCurrentRPM();
+  control_status_msg.l_current_control = motorLeft.getCurrentPWM();
+  control_status_msg.l_current_error   = motorLeft.getPIDError();
+  control_status_msg.l_setpoint        = motorLeft.getTargetRPM();
+
+  rcl_ret_t rc = rcl_publish(&control_status_pub, &control_status_msg, NULL);
+  if (rc != RCL_RET_OK) {
+    Serial.print("rcl_publish(control_status) error ");
+    Serial.println(rc);
+  }
+}
+
 void publishTelem(unsigned long step_time_us) {
   struct timespec tv = {0, 0};
   clock_gettime(CLOCK_REALTIME, &tv);
-  telem_msg.stamp.sec = tv.tv_sec;
-  telem_msg.stamp.nanosec = tv.tv_nsec;
+  nexus_msg.stamp.sec = tv.tv_sec;
+  nexus_msg.stamp.nanosec = tv.tv_nsec;
 
   float joint_pos_delta[MOTOR_COUNT];
   float step_time = 1e-6 * (float)step_time_us;
@@ -325,41 +342,24 @@ void publishTelem(unsigned long step_time_us) {
   long rssi_dbm = WiFi.RSSI();
   rssi_dbm = rssi_dbm > 127 ? 127 : rssi_dbm;
   rssi_dbm = rssi_dbm < -128 ? -128 : rssi_dbm;
-  telem_msg.wifi_rssi_dbm = (int8_t) rssi_dbm;
-
-  float batt_mv = getBatteryMilliVolts();
-  telem_msg.battery_mv = (uint16_t) round(batt_mv);
-
-  //Serial.print(rssi_dbm);
-  //Serial.print("dbm, ");
-  //Serial.print(voltage_mv);
-  //Serial.println("mV");
+  nexus_msg.wifi_rssi_dbm = (int8_t) rssi_dbm;
 
   for (unsigned char i = 0; i < MOTOR_COUNT; i++) {
-    joint[i].pos = i == 0 ? motorLeft.getShaftAngle() : motorRight.getShaftAngle();
-    joint_pos_delta[i] = joint[i].pos - joint_prev_pos[i];
-    joint[i].vel = joint_pos_delta[i] / step_time;    
-    joint_prev_pos[i] = joint[i].pos;
+    float pos = i == 0 ? motorLeft.getShaftAngle() : motorRight.getShaftAngle();
+    joint_pos_delta[i] = pos - joint_prev_pos[i];
+    joint_prev_pos[i] = pos;
   }
 
   calcOdometry(step_time_us, joint_pos_delta[0], joint_pos_delta[1]);
-//  calcOdometry2(step_time_us, joint_pos_delta[0], joint_pos_delta[1]);
 
-  rcl_ret_t rc = rcl_publish(&telem_pub, &telem_msg, NULL);
+  rcl_ret_t rc = rcl_publish(&nexus_telem_pub, &nexus_msg, NULL);
   if (rc != RCL_RET_OK) {
-    Serial.print("rcl_publish(telem_msg");
-    Serial.print(") error ");
+    Serial.print("rcl_publish(nexus_msg) error ");
     Serial.println(rc);
   }
-  
-  //Serial.print(telem_msg.odom_pos_x, 8);
-  //Serial.print("\t");
-  //Serial.print(telem_msg.odom_pos_y, 8);
-  //Serial.print("\t");
-  //Serial.println(telem_msg.odom_pos_yaw, 8);
-  
-  telem_msg.lds.size = 0;
-  telem_msg.seq++;
+
+  nexus_msg.lds.size = 0;
+  nexus_msg.seq++;
 }
 
 void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right,
@@ -381,40 +381,52 @@ void calcOdometry(unsigned long step_time_us, float joint_pos_delta_right,
 //  d_yaw = asin(d_yaw);
 
   // Average angle during the motion
-  float average_angle = d_yaw*0.5 + telem_msg.odom_pos_yaw;
+  float average_angle = d_yaw*0.5 + nexus_msg.odom_pos_yaw;
 
   if (average_angle > PI)
     average_angle -= TWO_PI;
   else if (average_angle < -PI)
     average_angle += TWO_PI;
 
-  // Calculate the new pose (x, y, and theta)
   float d_x = cos(average_angle) * average_distance;
   float d_y = sin(average_angle) * average_distance;
 
-  telem_msg.odom_pos_x += d_x;
-  telem_msg.odom_pos_y += d_y;
-  telem_msg.odom_pos_yaw += d_yaw;
+  nexus_msg.odom_pos_x += d_x;
+  nexus_msg.odom_pos_y += d_y;
+  nexus_msg.odom_pos_yaw += d_yaw;
 
-  if (telem_msg.odom_pos_yaw > PI)
-    telem_msg.odom_pos_yaw -= TWO_PI;
-  else if (telem_msg.odom_pos_yaw < -PI)
-    telem_msg.odom_pos_yaw += TWO_PI;
+  if (nexus_msg.odom_pos_yaw > PI)
+    nexus_msg.odom_pos_yaw -= TWO_PI;
+  else if (nexus_msg.odom_pos_yaw < -PI)
+    nexus_msg.odom_pos_yaw += TWO_PI;
 
   float d_time = 1e-6 * (float)step_time_us;
-  telem_msg.odom_vel_x = average_distance / d_time;
-  telem_msg.odom_vel_yaw = d_yaw / d_time;
+  nexus_msg.odom_vel_x = average_distance / d_time;
+  nexus_msg.odom_vel_yaw = d_yaw / d_time;
 }
 
 void spinPing() {
+  static uint8_t ping_fail_count = 0;
   unsigned long time_now_us = esp_timer_get_time();
   unsigned long step_time_us = time_now_us - ping_prev_pub_time_us;
-  
-  if (step_time_us >= cfg.UROS_PING_PUB_PERIOD_US) {
-    // timeout_ms, attempts
-    rmw_uros_ping_agent(1, 1); //rmw_ret_t rc =
-    ping_prev_pub_time_us = time_now_us;
-    //Serial.println(rc == RCL_RET_OK ? "Ping OK" : "Ping error");
+
+  if (step_time_us < cfg.UROS_PING_PUB_PERIOD_US)
+    return;
+
+  ping_prev_pub_time_us = time_now_us;
+  rmw_ret_t rc = rmw_uros_ping_agent(200, 1);
+  if (rc != RMW_RET_OK) {
+    Serial.print("Ping failed (");
+    Serial.print(++ping_fail_count);
+    Serial.println("/3)");
+    if (ping_fail_count >= 3) {
+      Serial.println("micro-ROS agent lost, restarting...");
+      setMotorSpeeds(0, 0);
+      delay(500);
+      ESP.restart();
+    }
+  } else {
+    ping_fail_count = 0;
   }
 }
 
@@ -468,6 +480,7 @@ void loop() {
   unsigned long time_now_us = esp_timer_get_time();
   spinIMU(time_now_us);
   spinTelem(false);
+  spinControlStatus();
   spinPing();
 
   if (wifi_ok)
@@ -498,30 +511,27 @@ bool isBootButtonPressed(uint8_t sec) {
 }
 
 void resetTelemMsg() {
-  telem_msg.seq = 0;
-  telem_msg.odom_pos_x = 0;
-  telem_msg.odom_pos_y = 0;
-  telem_msg.odom_pos_yaw = 0;
-  telem_msg.odom_vel_x = 0;
-  telem_msg.odom_vel_yaw = 0;
-  
-  telem_msg.joint.data = joint;
-  telem_msg.joint.capacity = MOTOR_COUNT;
-  telem_msg.joint.size = MOTOR_COUNT;
-
-  telem_msg.lds.data = lidar_buf;
-  telem_msg.lds.capacity = cfg.LIDAR_BUF_LEN;
-  telem_msg.lds.size = 0;
-
-  for (int i = 0; i < MOTOR_COUNT; i++) {
-    joint[i].pos = 0;
-    joint[i].vel = 0;
+  for (int i = 0; i < MOTOR_COUNT; i++)
     joint_prev_pos[i] = 0;
-  }
-
-  telem_msg.battery_mv = 0;
-  telem_msg.wifi_rssi_dbm = 0;
 }
+
+void resetNexusMsg() {
+  nexus_msg.seq = 0;
+  nexus_msg.odom_pos_x = 0;
+  nexus_msg.odom_pos_y = 0;
+  nexus_msg.odom_pos_yaw = 0;
+  nexus_msg.odom_vel_x = 0;
+  nexus_msg.odom_vel_yaw = 0;
+  nexus_msg.wifi_rssi_dbm = 0;
+  nexus_msg.dist_front_mm = 0;
+  nexus_msg.dist_left_mm = 0;
+  nexus_msg.dist_back_mm = 0;
+  nexus_msg.dist_right_mm = 0;
+  nexus_msg.lds.data = nexus_lidar_buf;
+  nexus_msg.lds.capacity = cfg.LIDAR_BUF_LEN;
+  nexus_msg.lds.size = 0;
+}
+
 void spinIMU(unsigned long time_now_us) {
   if ((time_now_us - imu_last_pub_us) < 10000)  // 10ms = 100Hz
     return;
@@ -754,7 +764,8 @@ void setup() {
   //pubDiagnostics();
   
   resetTelemMsg();
-  
+  resetNexusMsg();
+
   startLIDAR();
     //blink_error_code(cfg.ERR_LIDAR_START);
     //error_loop(cfg.ERR_LIDAR_START);
