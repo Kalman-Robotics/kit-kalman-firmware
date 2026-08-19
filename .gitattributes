@@ -1,0 +1,46 @@
+# Normalizar finales de linea: en el repo siempre LF, en el working copy lo que
+# corresponda a cada plataforma. Evita los avisos "LF will be replaced by CRLF".
+* text=auto
+
+# Codigo y configuracion: LF explicito
+*.c      text eol=lf
+*.cpp    text eol=lf
+*.h      text eol=lf
+*.hpp    text eol=lf
+*.ino    text eol=lf
+*.py     text eol=lf
+*.sh     text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.ini    text eol=lf
+*.cfg    text eol=lf
+*.xml    text eol=lf
+*.html   text eol=lf
+*.css    text eol=lf
+*.js     text eol=lf
+*.properties text eol=lf
+*.excalidraw text eol=lf
+
+# Scripts que corren en la Raspberry: LF obligatorio, con CRLF no ejecutan
+scripts/*.py text eol=lf
+
+# Binarios: sin conversion
+*.bin    binary
+*.elf    binary
+*.a      binary
+*.o      binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.mp4    binary
+*.gz     binary
+*.zip    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
