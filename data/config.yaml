@@ -5,9 +5,14 @@ robot:
   name: kalmanbot_01
   web: KALMANBOT_01.AI
   use_web: false 
-  wifi: 
+  wifi:
     ssid: kalman-robot
     password: kalman2024
+    # IP fija: evita el DHCP al arrancar. Vacio = DHCP.
+    # Hoy usamos DHCP: la IP fija dio problemas en la Raspberry.
+    #static_ip: 192.168.4.50
+    #gateway: 192.168.4.1
+    #subnet: 255.255.255.0
   computer:
     ip: 192.168.4.1
     port: 8888

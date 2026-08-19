@@ -29,6 +29,8 @@
 #include <rcl_interfaces/msg/log.h>
 #include <rmw_microros/rmw_microros.h>
 #include "robot_config.h"
+#include "boot_status.h"
+#include "diag.h"
 #include "lds_all_models.h"
 #include "motors.h"
 #include "esp_mac.h"
@@ -257,13 +259,36 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     Serial.println(rc);
   }
 
+  unsigned long agent_conn_start_ms = millis();
+  uint32_t agent_attempt = 0;
+
   while(true) {
     if (WiFi.status() != WL_CONNECTED) {
       Serial.println("WiFi lost while connecting to agent, restarting...");
+      setBootState(BOOT_AGENT_TIMEOUT);
       delay(500);
-      ESP.restart();
+      DIAG_RESTART("wifi_lost_during_agent_search");
     }
+
+    // Sin timeout el robot se queda en limbo indefinido cuando el agente no
+    // esta corriendo. Reiniciar es preferible: el siguiente ciclo lo encuentra
+    // si el agente levanto mientras tanto.
+    if (millis() - agent_conn_start_ms >= cfg.UROS_AGENT_CONN_TIMEOUT_MS) {
+      Serial.println("Micro-ROS agent not found, restarting...");
+      for (uint8_t i = 0; i < 10; i++) {
+        setBootState(BOOT_AGENT_TIMEOUT);
+        delay(100);
+      }
+      DIAG_RESTART("agent_not_found");
+      // En modo diagnostico se sigue buscando en vez de reiniciar
+      agent_conn_start_ms = millis();
+    }
+
+    // Fijo en el primer intento, parpadeante a partir del segundo: si lo ves
+    // parpadear, el WiFi esta bien y el que no responde es el agente
+    setBootState(agent_attempt == 0 ? BOOT_AGENT_SEARCHING : BOOT_AGENT_RETRY);
     digitalWrite(cfg.led_sys_gpio, !digitalRead(cfg.led_sys_gpio));
+
     Serial.print(F("Connecting to Micro-ROS agent "));
     Serial.print(cfg.dest_ip);
     Serial.print(" ... ");
@@ -271,11 +296,14 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
     if (rc != RCL_RET_OK) {
       Serial.println();
+      agent_attempt++;
+      delay(cfg.UROS_AGENT_RETRY_DELAY_MS); // no martillar la red ni el agente
       continue;
     }
     break;
   }
   Serial.println("success");
+  setBootState(BOOT_ROS_INIT);
 
   syncRosTime();
   printCurrentTime();

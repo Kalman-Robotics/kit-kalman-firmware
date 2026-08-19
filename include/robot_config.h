@@ -61,6 +61,12 @@ public:
   static const uint16_t LIDAR_BUF_LEN = 400;
   static const uint16_t LIDAR_SERIAL_RX_BUF_LEN = 1024;
   static const uint32_t WIFI_CONN_TIMEOUT_MS = 30000;
+  // Espera de IP por DHCP una vez asociado el AP
+  static const uint32_t WIFI_DHCP_TIMEOUT_MS = 10000;
+  // Reconexion de WiFi durante la operacion: cada cuanto reintentar y cuanto
+  // esperar antes de darse por vencido y reiniciar
+  static const uint32_t WIFI_RECONNECT_RETRY_MS = 5000;
+  static const uint32_t WIFI_RECONNECT_TIMEOUT_MS = 30000;
   // static constexpr char * SSID_AP = (char *)"robot.web"; //it'll be dynamic now
   static const uint32_t MONITOR_BAUD = 115200;
   static const uint8_t UNDEFINED_GPIO = 255;
@@ -71,7 +77,26 @@ public:
   static constexpr char * UROS_LOG_TOPIC_NAME = (char *)"rosout";
   //static constexpr char * UROS_DIAG_TOPIC_NAME = (char *)"diagnostics";
   static constexpr char * UROS_CMD_VEL_TOPIC_NAME = (char *)"cmd_vel";
-  static const uint32_t UROS_PING_PUB_PERIOD_US = 1*1000*1000;  // 1s × 3 fails = ~3s to detect agent loss
+  static const uint32_t UROS_PING_PUB_PERIOD_US = 1*1000*1000;  // 1s
+  // 500 ms de margen por ping: con 200 ms el jitter normal de WiFi bastaba para
+  // fallar aunque el agente estuviera vivo. 5 fallos => ~5 s para detectar la
+  // caida real, a cambio de no reiniciar por un bache pasajero de la red.
+  static const int UROS_PING_TIMEOUT_MS = 500;
+  static const uint8_t UROS_PING_MAX_FAILS = 5;
+  // Espera al agente durante el arranque. Si no aparece se reinicia el ESP32:
+  // un reinicio limpio sale del limbo y cubre el caso de que el agente arranque
+  // despues que el robot.
+  static const uint32_t UROS_AGENT_CONN_TIMEOUT_MS = 60000;
+
+  // Canal de control de sesion (UDP con la Raspberry). Ver include/session.h
+  static const uint16_t SESSION_UDP_PORT = 8889;
+  // Cuanto reintentar tras perder el agente antes de darlo por fin de sesion.
+  // Solo aplica si la Raspberry no avisa SESSION_END, que corta la espera ya.
+  static const uint32_t SESSION_GRACE_MS = 120000;
+  // Sondeo del agente mientras se espera una sesion. Es la red de contencion
+  // por si se pierde el broadcast SESSION_START.
+  static const uint32_t SESSION_IDLE_POLL_MS = 30000;
+  static const uint32_t UROS_AGENT_RETRY_DELAY_MS = 500;
   static const uint32_t UROS_TELEM_PUB_PERIOD_US = 50*1000;   // 20 Hz
   static const uint32_t UROS_IMU_PUB_PERIOD_US   = 10*1000;   // 100 Hz
   static const uint32_t UROS_TIME_SYNC_TIMEOUT_MS = 1000;
@@ -109,8 +134,10 @@ public:
 public:
   String ssid = "";
   String pass = "";
+  // IP fija del robot. Vacio = DHCP. Elegirla fuera del pool DHCP del AP
   String static_ip = "";
   String gateway_ip = "";
+  String subnet_mask = "255.255.255.0";
   String dest_ip = "";
   uint8_t ros_domain_id = 0;
   String board_manufacturer = "N/A";
@@ -192,7 +219,9 @@ public:
       line++;
       String ws = s;
       ws.trim();
-      if (s.startsWith("#") || (ws.length() == 0))
+      // Comparar sobre la version sin espacios: los comentarios indentados
+      // tambien son comentarios
+      if (ws.startsWith("#") || (ws.length() == 0))
         continue;
 
       if (s.length() > 80)
@@ -320,6 +349,8 @@ public:
         static_ip = trimString(pvalue);
       else if (lname[2] == "gateway")
         gateway_ip = trimString(pvalue);
+      else if (lname[2] == "subnet")
+        subnet_mask = trimString(pvalue);
       return;
     }
 
