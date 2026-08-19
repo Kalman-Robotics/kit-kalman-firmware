@@ -16,6 +16,7 @@
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_system.h>
 
 // Modo diagnostico para pruebas de larga duracion.
 //
@@ -34,6 +35,57 @@
 #ifndef DIAG_NO_RESTART
 #define DIAG_NO_RESTART 0
 #endif
+
+// ---------------------------------------------------------------------------
+// Forense de reinicios. Disponible en los dos modos: un reinicio de hardware
+// (watchdog, brownout, panic) tampoco lo decide el firmware en produccion, y
+// esta es la unica forma de saber por que ocurrio sin mirar el puerto serie.
+// ---------------------------------------------------------------------------
+
+extern esp_reset_reason_t g_rst_reason;
+extern uint32_t g_loop_max_ms;
+extern uint32_t g_loop_max_ms_since_report;
+
+// Texto del motivo, para que el log se lea sin tabla de conversion
+inline const char * resetReasonName(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:  return "poweron";
+    case ESP_RST_EXT:      return "ext_pin";
+    case ESP_RST_SW:       return "sw";        // ESP.restart() del propio codigo
+    case ESP_RST_PANIC:    return "panic";     // crash: excepcion o abort
+    case ESP_RST_INT_WDT:  return "int_wdt";   // interrupcion bloqueada
+    case ESP_RST_TASK_WDT: return "task_wdt";  // loop bloqueado
+    case ESP_RST_WDT:      return "other_wdt";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_BROWNOUT: return "brownout";  // caida de tension
+    case ESP_RST_SDIO:     return "sdio";
+    default:               return "unknown";
+  }
+}
+
+// Se llama al final de loop(). Mide cuanto tardo la iteracion anterior: si algo
+// bloquea el bucle mas alla del timeout del task watchdog, aparece aca antes de
+// provocar un reset.
+inline void diagLoopTick() {
+  static int64_t loop_start_us = 0;
+  if (loop_start_us != 0) {
+    uint32_t loop_ms = (uint32_t)((esp_timer_get_time() - loop_start_us) / 1000);
+    if (loop_ms > g_loop_max_ms)
+      g_loop_max_ms = loop_ms;
+    if (loop_ms > g_loop_max_ms_since_report)
+      g_loop_max_ms_since_report = loop_ms;
+  }
+  loop_start_us = esp_timer_get_time();
+}
+
+inline void diagLogResetReason() {
+  Serial.print("[DIAG] motivo del ultimo reset: ");
+  Serial.print(resetReasonName(g_rst_reason));
+  Serial.print(" (");
+  Serial.print((int)g_rst_reason);
+  Serial.print("), heap libre ");
+  Serial.println(ESP.getFreeHeap());
+}
 
 #if DIAG_NO_RESTART
 
@@ -69,6 +121,7 @@ inline void diagSkipRestart(const char * reason) {
 }
 
 inline void diagBegin() {
+  diagLogResetReason();
   diag_udp.begin(DIAG_PORT);
   Serial.print("[DIAG] modo sin reinicios, reporte UDP ");
   Serial.println(DIAG_PORT);
@@ -94,6 +147,15 @@ inline String diagReport() {
   s += "\"agent_down_s\":";    s += String(diag.total_agent_down_s); s += ",";
   s += "\"max_agent_down_s\":"; s += String(diag.max_agent_down_s); s += ",";
   s += "\"rssi\":";            s += String(WiFi.RSSI()); s += ",";
+  // Forense: motivo del ultimo reset y salud del heap y del bucle
+  s += "\"rst\":";             s += String((int)g_rst_reason); s += ",";
+  s += "\"rst_name\":\"";       s += resetReasonName(g_rst_reason); s += "\",";
+  s += "\"heap\":";            s += String(ESP.getFreeHeap()); s += ",";
+  s += "\"heap_min\":";        s += String(ESP.getMinFreeHeap()); s += ",";
+  s += "\"loop_max_ms\":";     s += String(g_loop_max_ms); s += ",";
+  // Pico del bucle solo en el intervalo desde el reporte anterior: un pico
+  // aislado al arrancar no enmascara el comportamiento actual
+  s += "\"loop_max_now\":";    s += String(g_loop_max_ms_since_report); s += ",";
   s += "\"reason\":\"";        s += diag.last_skip_reason; s += "\",";
   s += "\"ip\":\"";            s += WiFi.localIP().toString(); s += "\"";
   s += "}";
@@ -116,6 +178,7 @@ inline void diagSend(IPAddress to, bool broadcast) {
   }
   tx.stop();
   Serial.println(payload);
+  g_loop_max_ms_since_report = 0;
 }
 
 // Heartbeat periodico y atencion de comandos (STATUS / RESET)
@@ -135,6 +198,8 @@ inline void diagSpin() {
         diagSend(diag_udp.remoteIP(), false);
       } else if (cmd == "RESET") {
         diag = DiagStats();
+        g_loop_max_ms = 0;
+        g_loop_max_ms_since_report = 0;
         Serial.println("[DIAG] contadores reiniciados");
         diagSend(diag_udp.remoteIP(), false);
       }
@@ -150,7 +215,9 @@ inline void diagSpin() {
 #else  // modo normal: el firmware reinicia como siempre
 
 #define DIAG_RESTART(reason) ESP.restart()
-inline void diagBegin() {}
+// En modo normal no hay reporte UDP, pero el motivo del reset se sigue
+// registrando por serie: es el dato mas valioso tras un reinicio inesperado
+inline void diagBegin() { diagLogResetReason(); }
 inline void diagSpin() {}
 
 #endif

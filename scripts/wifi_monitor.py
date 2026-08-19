@@ -45,24 +45,66 @@ def fmt_hms(seconds: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+# Motivos de reset que indican un fallo, no un reinicio ordenado
+RESET_ALARMING = {"panic", "task_wdt", "int_wdt", "other_wdt", "brownout"}
+
+
 def describe(rec: dict) -> str:
     """Una linea legible por reporte."""
     ev = rec.get("ev", "?")
     up = fmt_hms(rec.get("up_s", 0))
-    drops = rec.get("drops", 0)
-    pct = rec.get("uptime_pct", 0)
     rssi = rec.get("rssi", 0)
-    rssi_min = rec.get("rssi_min", 0)
-    max_down = rec.get("max_down_s", 0)
 
-    line = (f"[{stamp()}] {ev:<10} up={up} drops={drops} "
-            f"uptime={pct}% rssi={rssi}dBm(min {rssi_min})")
-    if max_down:
-        line += f" peor_caida={max_down}s"
-    if rec.get("ip_changes"):
-        line += f" ip_changes={rec['ip_changes']}"
-    if ev == "up" and rec.get("last_down_s"):
-        line += f"  <-- se recupero tras {rec['last_down_s']}s"
+    line = f"[{stamp()}] {ev:<10} up={up} rssi={rssi}dBm"
+
+    # --- prueba de WiFi (puerto 8890) ---
+    if "uptime_pct" in rec:
+        line += (f" drops={rec.get('drops', 0)}"
+                 f" uptime={rec['uptime_pct']}%"
+                 f"(min {rec.get('rssi_min', 0)})")
+        if rec.get("max_down_s"):
+            line += f" peor_caida={rec['max_down_s']}s"
+        if rec.get("ip_changes"):
+            line += f" ip_changes={rec['ip_changes']}"
+        if ev == "up" and rec.get("last_down_s"):
+            line += f"  <-- se recupero tras {rec['last_down_s']}s"
+
+    # --- diagnostico del firmware (8891) / prueba aislada (8892) ---
+    if "cmd_vel_rx" in rec:
+        line += f" cmd_vel={rec['cmd_vel_rx']}"
+    if "agent_lost" in rec:
+        line += f" agent_lost={rec['agent_lost']}"
+    if rec.get("ping_fails"):
+        line += f" ping_fails={rec['ping_fails']}"
+    if rec.get("restarts_skipped"):
+        line += f" restarts_skipped={rec['restarts_skipped']}"
+
+    # --- forense: lo que dice por que se reinicio ---
+    rst = rec.get("rst_name")
+    if rst:
+        mark = "  <== REINICIO ANOMALO" if rst in RESET_ALARMING else ""
+        line += f" rst={rst}{mark}"
+
+    heap = rec.get("heap")
+    heap_min = rec.get("heap_min")
+    if heap is not None:
+        line += f" heap={heap // 1024}k"
+        if heap_min is not None:
+            line += f"(min {heap_min // 1024}k)"
+            # Menos de 20k libres historicos es zona de riesgo
+            if heap_min < 20000:
+                line += " <== HEAP BAJO"
+
+    loop_now = rec.get("loop_max_now")
+    if loop_now is not None:
+        line += f" loop={loop_now}ms"
+        # El task watchdog del ESP32 salta a los 5 s
+        if loop_now > 1000:
+            line += " <== BUCLE LENTO"
+
+    if rec.get("past_wrap"):
+        line += "  [pasada la marca de 71.58 min]"
+
     return line
 
 

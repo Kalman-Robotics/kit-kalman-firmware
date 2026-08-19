@@ -78,6 +78,11 @@ void spinPing();
 bool spinWiFi();
 void spinSession();
 void spinSessionLed();
+// Forense de reinicios: se captura una sola vez, antes de que nada lo pise
+esp_reset_reason_t g_rst_reason = ESP_RST_UNKNOWN;
+uint32_t g_loop_max_ms = 0;
+uint32_t g_loop_max_ms_since_report = 0;
+
 #if DIAG_NO_RESTART
 DiagStats diag;
 WiFiUDP diag_udp;
@@ -753,6 +758,8 @@ void loop() {
 
   motorLeft.update();
   motorRight.update();
+
+  diagLoopTick();
 }
 
 bool isBootButtonPressed(uint8_t sec) {
@@ -880,6 +887,11 @@ void setup() {
   setPinDrive(cfg.monitor_gpio_tx);
   while(!Serial)
     delay(0);
+
+  // Antes que nada: el motivo del reset anterior. Distingue un ESP.restart()
+  // del propio codigo de un watchdog, un panic o un brownout, que es lo unico
+  // que no se puede deducir desde la Raspberry.
+  g_rst_reason = esp_reset_reason();
 
   Serial.println();
   Serial.print("kalman.ai firmware version ");
