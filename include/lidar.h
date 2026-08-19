@@ -68,45 +68,101 @@ int lidar_serial_read_callback() {
   return LdSerial.read();
 }
 
-// Sectores: frente=0°±20°, izquierda=90°±20°, atrás=180°±20°, derecha=270°±20°
-static uint32_t sector_min_mm[4] = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+// Distancia en 4 sectores angostos centrados en frente, izquierda, atrás y
+// derecha: la mediana de los puntos que caen dentro de +/-SECTOR_HALF_WIDTH_DEG
+// del centro. Es decir la distancia "justo al" frente/costado/atrás, y la
+// mediana descarta los puntos espurios sin necesidad de un umbral.
+//
+// A 10 Hz el LD19 entrega ~450 puntos por vuelta (~0.8 deg de paso), asi que un
+// sector de 10 deg recoge ~12 puntos. El driver corrige el paralaje del sensor
+// desplazando cada punto varios grados segun la distancia medida, por lo que un
+// sector mas angosto que esto no es confiable.
+static constexpr float SECTOR_HALF_WIDTH_DEG = 5.0f;
+
+// Rango util del LiDAR; descarta reflejos del propio chasis y lecturas fuera de alcance
+static constexpr float DIST_MIN_MM = 30.0f;
+static constexpr float DIST_MAX_MM = 12000.0f;
+
+// Conversion del marco del sensor al del robot (0 = frente, 90 = izquierda):
+//   angulo_robot = angulo_sensor * LIDAR_ANGLE_DIR + LIDAR_MOUNT_OFFSET_DEG
+//
+// Medido en el robot: el LD19 numera los angulos en sentido horario, de ahi
+// DIR = -1. Con ese signo el frente fisico, que cae en 270 deg crudos, necesita
+// un offset de -90 deg. Solo afecta a dist_front/left/back/right_mm; el array
+// nexus_msg.lds sigue llevando los angulos crudos del sensor.
+static constexpr float LIDAR_ANGLE_DIR = -1.0f;
+static constexpr float LIDAR_MOUNT_OFFSET_DEG = -90.0f;
+
+// Centros de sector: frente, izquierda, atrás, derecha
+static constexpr float sector_center_deg[4] = {0.0f, 90.0f, 180.0f, 270.0f};
+
+// Holgura sobre los ~12 puntos esperados, por si el scan gira mas lento
+static constexpr uint8_t SECTOR_MAX_PTS = 32;
+
+// Muestras del scan en curso, mantenidas ordenadas de menor a mayor
+static uint16_t sector_pts_mm[4][SECTOR_MAX_PTS];
+static uint8_t sector_count[4] = {0, 0, 0, 0};
+
+// Ultimo scan completo; el mensaje se publica desde aqui para que nunca lleve
+// un sector a medio acumular
+static uint16_t sector_dist_mm[4] = {0, 0, 0, 0};
+
+void lidar_sectors_publish() {
+  nexus_msg.dist_front_mm = sector_dist_mm[0];
+  nexus_msg.dist_left_mm  = sector_dist_mm[1];
+  nexus_msg.dist_back_mm  = sector_dist_mm[2];
+  nexus_msg.dist_right_mm = sector_dist_mm[3];
+}
 
 void lidar_scan_point_callback(float angle_deg, float distance_mm, float quality,
   bool scan_completed) {
 
   if (scan_completed) {
-    nexus_msg.dist_front_mm = sector_min_mm[0] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[0];
-    nexus_msg.dist_left_mm  = sector_min_mm[1] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[1];
-    nexus_msg.dist_back_mm  = sector_min_mm[2] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[2];
-    nexus_msg.dist_right_mm = sector_min_mm[3] == UINT32_MAX ? 0 : (uint16_t)sector_min_mm[3];
-
-    sector_min_mm[0] = sector_min_mm[1] = sector_min_mm[2] = sector_min_mm[3] = UINT32_MAX;
+    for (uint8_t i = 0; i < 4; i++) {
+      uint8_t n = sector_count[i];
+      if (n == 0) {
+        sector_dist_mm[i] = 0; // sin lecturas validas en el sector
+      } else if (n & 1) {
+        sector_dist_mm[i] = sector_pts_mm[i][n >> 1];
+      } else {
+        // Par: promediar las dos muestras centrales
+        sector_dist_mm[i] = (uint16_t)(((uint32_t)sector_pts_mm[i][(n >> 1) - 1] +
+          sector_pts_mm[i][n >> 1]) >> 1);
+      }
+      sector_count[i] = 0;
+    }
     return;
   }
 
-  if (distance_mm <= 0 || quality <= 0)
+  if (distance_mm < DIST_MIN_MM || distance_mm > DIST_MAX_MM || quality <= 0)
     return;
 
-  uint32_t d = (uint32_t)distance_mm;
-  // Normalizar ángulo a 0..360
+  // Pasar del marco del sensor al del robot, luego normalizar a 0..360
+  angle_deg = angle_deg * LIDAR_ANGLE_DIR + LIDAR_MOUNT_OFFSET_DEG;
+  angle_deg = fmodf(angle_deg, 360.0f);
   if (angle_deg < 0) angle_deg += 360.0f;
-  if (angle_deg >= 360.0f) angle_deg -= 360.0f;
 
-  // Frente: 340..360 y 0..20
-  if (angle_deg >= 340.0f || angle_deg <= 20.0f) {
-    if (d < sector_min_mm[0]) sector_min_mm[0] = d;
-  }
-  // Izquierda: 70..110
-  else if (angle_deg >= 70.0f && angle_deg <= 110.0f) {
-    if (d < sector_min_mm[1]) sector_min_mm[1] = d;
-  }
-  // Atrás: 160..200
-  else if (angle_deg >= 160.0f && angle_deg <= 200.0f) {
-    if (d < sector_min_mm[2]) sector_min_mm[2] = d;
-  }
-  // Derecha: 250..290
-  else if (angle_deg >= 250.0f && angle_deg <= 290.0f) {
-    if (d < sector_min_mm[3]) sector_min_mm[3] = d;
+  for (uint8_t i = 0; i < 4; i++) {
+    // Diferencia angular con envolvente en 0/360
+    float delta = fabsf(angle_deg - sector_center_deg[i]);
+    if (delta > 180.0f) delta = 360.0f - delta;
+
+    if (delta > SECTOR_HALF_WIDTH_DEG)
+      continue;
+
+    if (sector_count[i] >= SECTOR_MAX_PTS)
+      break; // sector saturado, ignorar el resto de la vuelta
+
+    // Insercion ordenada, asi la mediana sale sin ordenar al cerrar el scan
+    uint16_t d = (uint16_t)distance_mm;
+    uint8_t k = sector_count[i];
+    while (k > 0 && sector_pts_mm[i][k - 1] > d) {
+      sector_pts_mm[i][k] = sector_pts_mm[i][k - 1];
+      k--;
+    }
+    sector_pts_mm[i][k] = d;
+    sector_count[i]++;
+    break;
   }
 }
 
