@@ -78,10 +78,13 @@ public:
   //static constexpr char * UROS_DIAG_TOPIC_NAME = (char *)"diagnostics";
   static constexpr char * UROS_CMD_VEL_TOPIC_NAME = (char *)"cmd_vel";
   static const uint32_t UROS_PING_PUB_PERIOD_US = 1*1000*1000;  // 1s
-  // 500 ms de margen por ping: con 200 ms el jitter normal de WiFi bastaba para
-  // fallar aunque el agente estuviera vivo. 5 fallos => ~5 s para detectar la
-  // caida real, a cambio de no reiniciar por un bache pasajero de la red.
-  static const int UROS_PING_TIMEOUT_MS = 500;
+  // rmw_uros_ping_agent() BLOQUEA el loop durante todo el timeout cuando el
+  // agente no responde. Con 500 ms y un ping por segundo el firmware pasaba el
+  // 50 % del tiempo congelado, y durante ese rato nadie drena el socket UDP:
+  // un corte breve se realimentaba hasta volverse permanente. Medido en el
+  // robot: loop_max_now 36 ms normal -> 508 ms al primer fallo -> 1995 ms con
+  // el cuelgue establecido. Con 100 ms el bloqueo baja al 10 % del tiempo.
+  static const int UROS_PING_TIMEOUT_MS = 100;
   static const uint8_t UROS_PING_MAX_FAILS = 5;
   // Espera al agente durante el arranque. Si no aparece se reinicia el ESP32:
   // un reinicio limpio sale del limbo y cubre el caso de que el agente arranque

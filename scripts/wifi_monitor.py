@@ -113,6 +113,18 @@ def describe(rec: dict) -> str:
         line += (f" rx_stalls={rec['rx_stalls']}"
                  f"(max {rec.get('rx_stall_max_s', 0)}s)")
 
+    # Uptime de cada corte: si se agrupan cerca de 3600 s o de un multiplo,
+    # hay un temporizador venciendo y no un evento aleatorio
+    at = rec.get("stall_at")
+    if at:
+        marks = []
+        for t in at:
+            near_hour = abs(t % 3600 - 3600) < 120 or t % 3600 < 120
+            marks.append(f"{t}s{'*' if near_hour else ''}")
+        line += f" cortes_en=[{','.join(marks)}]"
+        if any(abs(t % 3600 - 3600) < 120 or t % 3600 < 120 for t in at):
+            line += " <== CERCA DE UN MULTIPLO DE 1 H"
+
     # heap DMA: si se agota, el driver no puede reservar buffers de RX
     dma = rec.get("heap_dma")
     if dma is not None:

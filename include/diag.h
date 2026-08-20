@@ -72,6 +72,14 @@ extern uint32_t g_rx_stalls;              // episodios de RX detenido
 extern uint32_t g_rx_stall_max_s;         // el mas largo: duracion real del fallo
 extern bool     g_rx_stalled;             // dentro de un episodio ahora mismo
 
+// Uptime al comenzar cada corte. Si los cortes se agrupan cerca de 3600 s o de
+// un multiplo, hay un contador que desborda o un temporizador que vence, lo que
+// acota el bug enormemente; si salen dispersos, es un evento aleatorio.
+// Observado hasta ahora: panic a ~1677 s, RX stall a 3587 s (59.8 min).
+static const uint8_t RX_STALL_LOG_LEN = 8;
+extern uint32_t g_rx_stall_at_s[RX_STALL_LOG_LEN];
+extern uint8_t  g_rx_stall_log_n;
+
 // Umbral para declarar RX detenido. El ping corre a 1 Hz, asi que 10 s sin un
 // solo paquete entrante no puede ser normal.
 static const int64_t RX_STALL_US = 10LL * 1000 * 1000;
@@ -107,6 +115,14 @@ inline void diagRxWatchdog() {
   if (!g_rx_stalled) {
     g_rx_stalled = true;
     g_rx_stalls++;
+
+    // Momento en que empezo el corte, no en que se detecto
+    uint32_t began_s = (uint32_t)((g_last_rx_us) / 1000000);
+    if (g_rx_stall_log_n < RX_STALL_LOG_LEN)
+      g_rx_stall_at_s[g_rx_stall_log_n++] = began_s;
+
+    Serial.print("[DIAG] corte comenzo en up_s=");
+    Serial.println(began_s);
     Serial.print("[DIAG] RX STALL #");
     Serial.print(g_rx_stalls);
     Serial.print(": ");
@@ -237,6 +253,12 @@ inline String diagReport() {
   s += "\"last_rx_s\":";       s += String((long)since_rx); s += ",";
   s += "\"rx_stalls\":";       s += String(g_rx_stalls); s += ",";
   s += "\"rx_stall_max_s\":";  s += String(g_rx_stall_max_s); s += ",";
+  s += "\"stall_at\":[";
+  for (uint8_t i = 0; i < g_rx_stall_log_n; i++) {
+    if (i) s += ",";
+    s += String(g_rx_stall_at_s[i]);
+  }
+  s += "],";
 
   // Los buffers de recepcion del driver WiFi salen de memoria DMA. Si esta
   // region se agota, el driver no puede reservar buffers de RX y deja de
@@ -302,6 +324,7 @@ inline void diagSpin() {
         g_loop_max_ms_since_report = 0;
         g_rx_stalls = 0;
         g_rx_stall_max_s = 0;
+        g_rx_stall_log_n = 0;
         Serial.println("[DIAG] contadores reiniciados");
         diagSend(diag_udp.remoteIP(), false);
       }

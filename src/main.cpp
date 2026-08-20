@@ -89,6 +89,8 @@ volatile int64_t  g_last_rx_us = 0;
 uint32_t g_rx_stalls = 0;
 uint32_t g_rx_stall_max_s = 0;
 bool     g_rx_stalled = false;
+uint32_t g_rx_stall_at_s[RX_STALL_LOG_LEN] = {0};
+uint8_t  g_rx_stall_log_n = 0;
 
 #if DIAG_NO_RESTART
 DiagStats diag;
