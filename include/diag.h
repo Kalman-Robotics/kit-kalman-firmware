@@ -17,6 +17,8 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
+#include <esp_heap_caps.h>
 
 // Modo diagnostico para pruebas de larga duracion.
 //
@@ -45,6 +47,76 @@
 extern esp_reset_reason_t g_rst_reason;
 extern uint32_t g_loop_max_ms;
 extern uint32_t g_loop_max_ms_since_report;
+
+// ---------------------------------------------------------------------------
+// Deteccion de fallo UNIDIRECCIONAL de recepcion.
+//
+// Se observo al ESP32 transmitiendo con normalidad (reportes UDP puntuales
+// cada 30 s) mientras dejaba de recibir: ping ICMP al 100 % de perdida, ARP
+// FAILED, cmd_vel congelado, y aun asi authorized=yes y cero desasociaciones
+// en el AP. TX vivo, RX muerto.
+//
+// Desde la Raspberry no se puede medir la duracion real de esos episodios: el
+// script de vigilancia sondea cada 15 s y los "22 s" observados son un
+// artefacto suyo. Estos contadores la miden desde adentro.
+//
+// Se registra todo trafico entrante, no solo el UDP de comandos: la Raspberry
+// manda comandos de forma esporadica, asi que un contador que solo cuente esos
+// casi nunca subiria. La respuesta del ping al agente micro-ROS es trafico
+// entrante continuo (1 Hz) y sirve como testigo fiable de que el RX funciona.
+// ---------------------------------------------------------------------------
+
+extern volatile uint32_t g_rx_count;      // paquetes entrantes de cualquier tipo
+extern volatile int64_t  g_last_rx_us;    // instante del ultimo
+extern uint32_t g_rx_stalls;              // episodios de RX detenido
+extern uint32_t g_rx_stall_max_s;         // el mas largo: duracion real del fallo
+extern bool     g_rx_stalled;             // dentro de un episodio ahora mismo
+
+// Umbral para declarar RX detenido. El ping corre a 1 Hz, asi que 10 s sin un
+// solo paquete entrante no puede ser normal.
+static const int64_t RX_STALL_US = 10LL * 1000 * 1000;
+
+// Llamar cada vez que llega algo desde la red
+inline void diagNoteRx() {
+  g_rx_count++;
+  g_last_rx_us = esp_timer_get_time();
+  if (g_rx_stalled) {
+    uint32_t stall_s = 0;
+    g_rx_stalled = false;
+    Serial.print("[DIAG] RX restablecido tras ");
+    Serial.print(stall_s);
+    Serial.println("s");
+  }
+}
+
+// Vigila el silencio de entrada. Se llama desde loop().
+inline void diagRxWatchdog() {
+  if (WiFi.status() != WL_CONNECTED || g_last_rx_us == 0)
+    return;
+
+  int64_t silence_us = esp_timer_get_time() - g_last_rx_us;
+  if (silence_us < RX_STALL_US) {
+    g_rx_stalled = false;
+    return;
+  }
+
+  uint32_t silence_s = (uint32_t)(silence_us / 1000000);
+  if (silence_s > g_rx_stall_max_s)
+    g_rx_stall_max_s = silence_s;
+
+  if (!g_rx_stalled) {
+    g_rx_stalled = true;
+    g_rx_stalls++;
+    Serial.print("[DIAG] RX STALL #");
+    Serial.print(g_rx_stalls);
+    Serial.print(": ");
+    Serial.print(silence_s);
+    Serial.print("s sin recibir nada, WiFi.status()=");
+    Serial.print(WiFi.status());
+    Serial.print(" rssi=");
+    Serial.println(WiFi.RSSI());
+  }
+}
 
 // Texto del motivo, para que el log se lea sin tabla de conversion
 inline const char * resetReasonName(esp_reset_reason_t r) {
@@ -156,6 +228,31 @@ inline String diagReport() {
   // Pico del bucle solo en el intervalo desde el reporte anterior: un pico
   // aislado al arrancar no enmascara el comportamiento actual
   s += "\"loop_max_now\":";    s += String(g_loop_max_ms_since_report); s += ",";
+
+  // Recepcion: si last_rx_s crece mientras este reporte sigue saliendo, el
+  // fallo es unidireccional y aca queda medida su duracion real
+  int64_t since_rx = g_last_rx_us > 0 ?
+    (esp_timer_get_time() - g_last_rx_us) / 1000000 : -1;
+  s += "\"rx\":";              s += String(g_rx_count); s += ",";
+  s += "\"last_rx_s\":";       s += String((long)since_rx); s += ",";
+  s += "\"rx_stalls\":";       s += String(g_rx_stalls); s += ",";
+  s += "\"rx_stall_max_s\":";  s += String(g_rx_stall_max_s); s += ",";
+
+  // Los buffers de recepcion del driver WiFi salen de memoria DMA. Si esta
+  // region se agota, el driver no puede reservar buffers de RX y deja de
+  // recibir sin dejar de transmitir: encaja exactamente con lo observado.
+  s += "\"heap_dma\":";        s += String(heap_caps_get_free_size(MALLOC_CAP_DMA)); s += ",";
+  s += "\"heap_dma_min\":";    s += String(heap_caps_get_minimum_free_size(MALLOC_CAP_DMA)); s += ",";
+
+  // Si WiFi.status() sigue en WL_CONNECTED (3) durante el fallo, el problema
+  // esta por debajo de la capa Arduino
+  s += "\"wifi_status\":";     s += String((int)WiFi.status()); s += ",";
+  {
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+      s += "\"wifi_ch\":";     s += String(ap.primary); s += ",";
+    }
+  }
   s += "\"reason\":\"";        s += diag.last_skip_reason; s += "\",";
   s += "\"ip\":\"";            s += WiFi.localIP().toString(); s += "\"";
   s += "}";
@@ -185,8 +282,11 @@ inline void diagSend(IPAddress to, bool broadcast) {
 inline void diagSpin() {
   static unsigned long last_hb_ms = 0;
 
+  diagRxWatchdog();
+
   int len = diag_udp.parsePacket();
   if (len > 0) {
+    diagNoteRx();
     char buf[32];
     int n = diag_udp.read(buf, sizeof(buf) - 1);
     if (n > 0) {
@@ -200,6 +300,8 @@ inline void diagSpin() {
         diag = DiagStats();
         g_loop_max_ms = 0;
         g_loop_max_ms_since_report = 0;
+        g_rx_stalls = 0;
+        g_rx_stall_max_s = 0;
         Serial.println("[DIAG] contadores reiniciados");
         diagSend(diag_udp.remoteIP(), false);
       }

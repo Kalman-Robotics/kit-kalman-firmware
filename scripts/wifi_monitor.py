@@ -102,6 +102,27 @@ def describe(rec: dict) -> str:
         if loop_now > 1000:
             line += " <== BUCLE LENTO"
 
+    # --- recepcion: el fallo unidireccional se ve aca ---
+    last_rx = rec.get("last_rx_s")
+    if last_rx is not None and last_rx >= 0:
+        line += f" last_rx={last_rx}s"
+        # El ping corre a 1 Hz: mas de 10 s sin recibir nada no es normal
+        if last_rx >= 10:
+            line += " <== RX DETENIDO"
+    if rec.get("rx_stalls"):
+        line += (f" rx_stalls={rec['rx_stalls']}"
+                 f"(max {rec.get('rx_stall_max_s', 0)}s)")
+
+    # heap DMA: si se agota, el driver no puede reservar buffers de RX
+    dma = rec.get("heap_dma")
+    if dma is not None:
+        line += f" dma={dma // 1024}k"
+        dma_min = rec.get("heap_dma_min")
+        if dma_min is not None:
+            line += f"(min {dma_min // 1024}k)"
+            if dma_min < 8000:
+                line += " <== DMA AGOTANDOSE"
+
     if rec.get("past_wrap"):
         line += "  [pasada la marca de 71.58 min]"
 

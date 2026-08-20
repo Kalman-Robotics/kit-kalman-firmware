@@ -17,6 +17,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include "robot_config.h"
+#include "diag.h"
 
 // Canal de control de sesion entre la Raspberry y el ESP32.
 //
@@ -94,6 +95,7 @@ class SessionLink {
       int len = udp_.parsePacket();
       if (len <= 0)
         return false;
+      diagNoteRx();
 
       char buf[64];
       int n = udp_.read(buf, sizeof(buf) - 1);

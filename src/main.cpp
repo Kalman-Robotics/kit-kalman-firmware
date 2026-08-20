@@ -83,6 +83,13 @@ esp_reset_reason_t g_rst_reason = ESP_RST_UNKNOWN;
 uint32_t g_loop_max_ms = 0;
 uint32_t g_loop_max_ms_since_report = 0;
 
+// Testigos de recepcion: ver el bloque de RX stall en include/diag.h
+volatile uint32_t g_rx_count = 0;
+volatile int64_t  g_last_rx_us = 0;
+uint32_t g_rx_stalls = 0;
+uint32_t g_rx_stall_max_s = 0;
+bool     g_rx_stalled = false;
+
 #if DIAG_NO_RESTART
 DiagStats diag;
 WiFiUDP diag_udp;
@@ -112,6 +119,7 @@ void twist_sub_callback(const void *msgin);
 void twist_sub_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   last_cmd_vel_us = esp_timer_get_time();
+  diagNoteRx();
 #if DIAG_NO_RESTART
   diag.cmd_vel_rx++;
   diag.last_cmd_vel_s = last_cmd_vel_us / 1000000;
@@ -545,6 +553,9 @@ void spinPing() {
 #endif
     }
   } else {
+    // Un ping respondido es la prueba mas fiable de que el RX sigue vivo:
+    // llega una respuesta del agente cada segundo
+    diagNoteRx();
     if (session_state == SESSION_GRACE) {
       Serial.println("micro-ROS agent recovered, back to ACTIVE");
       session_state = SESSION_ACTIVE;
