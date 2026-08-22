@@ -85,6 +85,138 @@ extern uint8_t  g_rx_stall_log_n;
 // solo paquete entrante no puede ser normal.
 static const int64_t RX_STALL_US = 10LL * 1000 * 1000;
 
+inline const char * resetReasonName(esp_reset_reason_t r);
+
+// ---------------------------------------------------------------------------
+// Historial de incidentes, tambien en RTC RAM.
+//
+// Los contadores de diag viven en RAM normal y se pierden en cada reinicio, asi
+// que tras un cuelgue no queda rastro de lo que paso antes. Este historial
+// sobrevive a panic, watchdog y brownout, y guarda los ultimos 16 eventos con
+// el uptime en que ocurrieron: permite reconstruir la secuencia aunque el robot
+// se haya reiniciado varias veces.
+//
+// Solo lo borra un corte de alimentacion o el comando CLEAR_HISTORY.
+// ---------------------------------------------------------------------------
+
+enum incident_t {
+  INC_BOOT = 1,          // arranque; data = motivo del reset
+  INC_RX_STALL = 2,      // RX detenido; data = segundos de silencio
+  INC_RX_RECOVER = 3,    // RX restablecido
+  INC_AGENT_LOST = 4,    // agente micro-ROS perdido
+  INC_AGENT_BACK = 5,    // agente recuperado
+  INC_WIFI_LOST = 6,
+  INC_WIFI_BACK = 7,
+  INC_PANIC_FORCED = 8,  // volcado provocado por RX muerto
+  INC_LOOP_SLOW = 9,     // el bucle supero el umbral; data = ms
+};
+
+inline const char * incidentName(uint8_t t) {
+  switch (t) {
+    case INC_BOOT:         return "boot";
+    case INC_RX_STALL:     return "rx_stall";
+    case INC_RX_RECOVER:   return "rx_recover";
+    case INC_AGENT_LOST:   return "agent_lost";
+    case INC_AGENT_BACK:   return "agent_back";
+    case INC_WIFI_LOST:    return "wifi_lost";
+    case INC_WIFI_BACK:    return "wifi_back";
+    case INC_PANIC_FORCED: return "panic_forced";
+    case INC_LOOP_SLOW:    return "loop_slow";
+    default:               return "?";
+  }
+}
+
+#define HIST_LEN   16
+#define HIST_MAGIC 0x48495331  // "HIS1"
+
+struct HistBuf {
+  uint32_t magic;
+  uint16_t idx;
+  uint16_t boots;        // reinicios desde el ultimo corte de alimentacion
+  struct {
+    uint32_t up_s;       // uptime dentro de ESE arranque
+    uint16_t boot;       // en que arranque ocurrio
+    uint8_t  type;
+    uint16_t data;
+  } e[HIST_LEN];
+};
+
+extern RTC_NOINIT_ATTR HistBuf g_hist;
+
+inline void histAdd(uint8_t type, uint16_t data = 0) {
+  if (g_hist.magic != HIST_MAGIC)
+    return;  // aun no inicializado
+  uint16_t i = g_hist.idx;
+  g_hist.e[i].up_s = (uint32_t)(esp_timer_get_time() / 1000000);
+  g_hist.e[i].boot = g_hist.boots;
+  g_hist.e[i].type = type;
+  g_hist.e[i].data = data;
+  g_hist.idx = (i + 1) % HIST_LEN;
+}
+
+inline void histBegin(uint8_t reset_reason) {
+  if (g_hist.magic != HIST_MAGIC) {
+    // Primer arranque tras un corte de alimentacion
+    g_hist.magic = HIST_MAGIC;
+    g_hist.idx = 0;
+    g_hist.boots = 0;
+    memset(g_hist.e, 0, sizeof(g_hist.e));
+  }
+  g_hist.boots++;
+  histAdd(INC_BOOT, reset_reason);
+}
+
+// Vuelca el historial por serie, mas antiguo primero
+inline void histDump() {
+  if (g_hist.magic != HIST_MAGIC)
+    return;
+  Serial.print("[DIAG] historial de incidentes (");
+  Serial.print(g_hist.boots);
+  Serial.println(" arranques desde el ultimo corte de alimentacion):");
+  for (uint16_t k = 0; k < HIST_LEN; k++) {
+    uint16_t i = (g_hist.idx + k) % HIST_LEN;
+    if (g_hist.e[i].type == 0)
+      continue;
+    Serial.print("  boot#");
+    Serial.print(g_hist.e[i].boot);
+    Serial.print(" up=");
+    Serial.print(g_hist.e[i].up_s);
+    Serial.print("s ");
+    Serial.print(incidentName(g_hist.e[i].type));
+    if (g_hist.e[i].type == INC_BOOT) {
+      Serial.print(" (");
+      Serial.print(resetReasonName((esp_reset_reason_t)g_hist.e[i].data));
+      Serial.print(")");
+    } else if (g_hist.e[i].data) {
+      Serial.print(" d=");
+      Serial.print(g_hist.e[i].data);
+    }
+    Serial.println();
+  }
+}
+
+// El historial en JSON, para que viaje por UDP sin depender del serie
+inline String histJson() {
+  String s = "[";
+  if (g_hist.magic == HIST_MAGIC) {
+    bool first = true;
+    for (uint16_t k = 0; k < HIST_LEN; k++) {
+      uint16_t i = (g_hist.idx + k) % HIST_LEN;
+      if (g_hist.e[i].type == 0)
+        continue;
+      if (!first) s += ",";
+      first = false;
+      s += "{\"b\":";     s += String(g_hist.e[i].boot);
+      s += ",\"t\":";     s += String(g_hist.e[i].up_s);
+      s += ",\"ev\":\"";   s += incidentName(g_hist.e[i].type);
+      s += "\",\"d\":";    s += String(g_hist.e[i].data);
+      s += "}";
+    }
+  }
+  s += "]";
+  return s;
+}
+
 // Llamar cada vez que llega algo desde la red
 inline void diagNoteRx() {
   g_rx_count++;
@@ -92,6 +224,7 @@ inline void diagNoteRx() {
   if (g_rx_stalled) {
     uint32_t stall_s = 0;
     g_rx_stalled = false;
+    histAdd(INC_RX_RECOVER);
     Serial.print("[DIAG] RX restablecido tras ");
     Serial.print(stall_s);
     Serial.println("s");
@@ -139,11 +272,13 @@ inline void diagRxWatchdog() {
     Serial.print(WiFi.status());
     Serial.print(" rssi=");
     Serial.println(WiFi.RSSI());
+    histAdd(INC_RX_STALL, (uint16_t)silence_s);
   }
 
   // Forzar el volcado cuando el corte ya no se va a recuperar
   if (silence_s >= RX_STALL_PANIC_S) {
     Serial.println("[DIAG] RX muerto demasiado tiempo: provocando core dump");
+    histAdd(INC_PANIC_FORCED, (uint16_t)silence_s);
     Serial.flush();
     assert(false && "rx_stall: volcado forzado para capturar el estado");
   }
@@ -247,6 +382,7 @@ struct TraceBuf {
 
 extern RTC_NOINIT_ATTR TraceBuf g_trace;
 
+
 // Muy barata a proposito: la llama el loop miles de veces por segundo.
 // Sin IRAM_ATTR: solo la usa el loop, nunca un ISR, y marcarla como inline en
 // IRAM provoca errores de relocacion al enlazar.
@@ -318,6 +454,8 @@ inline void diagLogResetReason() {
   Serial.print("), heap libre ");
   Serial.println(ESP.getFreeHeap());
   diagReadCoreDump();
+  histBegin((uint8_t)g_rst_reason);
+  histDump();
   diagDumpTrace();
 }
 
@@ -415,6 +553,9 @@ inline String diagReport() {
   // Si WiFi.status() sigue en WL_CONNECTED (3) durante el fallo, el problema
   // esta por debajo de la capa Arduino
   s += "\"wifi_status\":";     s += String((int)WiFi.status()); s += ",";
+  // Numero de arranques desde el ultimo corte de alimentacion: si crece,
+  // el robot se esta reiniciando solo
+  s += "\"boots\":";           s += String(g_hist.boots); s += ",";
   if (g_have_coredump) {
     s += "\"panic_pc\":\"0x";     s += String(g_panic_pc, HEX); s += "\",";
     s += "\"panic_task\":\"";     s += g_panic_task; s += "\",";
@@ -467,6 +608,26 @@ inline void diagSpin() {
       cmd.trim();
       cmd.toUpperCase();
       if (cmd == "STATUS") {
+        diagSend(diag_udp.remoteIP(), false);
+      } else if (cmd == "HISTORY") {
+        // El historial va aparte: no cabe en el reporte periodico
+        String h = "{\"v\":1,\"ack\":\"HISTORY\",\"boots\":";
+        h += String(g_hist.boots);
+        h += ",\"hist\":";
+        h += histJson();
+        h += "}";
+        WiFiUDP tx;
+        if (tx.beginPacket(diag_udp.remoteIP(), DIAG_PORT) == 1) {
+          tx.print(h);
+          tx.endPacket();
+        }
+        tx.stop();
+        Serial.println(h);
+      } else if (cmd == "CLEAR_HISTORY") {
+        g_hist.idx = 0;
+        g_hist.boots = 0;
+        memset(g_hist.e, 0, sizeof(g_hist.e));
+        Serial.println("[DIAG] historial borrado");
         diagSend(diag_udp.remoteIP(), false);
       } else if (cmd == "RESET") {
         diag = DiagStats();

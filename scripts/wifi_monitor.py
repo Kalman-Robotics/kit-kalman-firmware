@@ -141,6 +141,22 @@ def describe(rec: dict) -> str:
         line += (f"  <== CORE DUMP pc={pc}"
                  f" tarea={rec.get('panic_task', '?')}")
 
+    # Arranques desde el ultimo corte de alimentacion: si crece, el robot
+    # se esta reiniciando solo
+    boots = rec.get("boots")
+    if boots is not None and boots > 1:
+        line += f" boots={boots}"
+
+    # Respuesta al comando HISTORY: el historial completo
+    hist = rec.get("hist")
+    if hist is not None:
+        n_boots = rec.get("boots", "?")
+        line += (f"\n  historial ({len(hist)} eventos, "
+                 f"{n_boots} arranques):")
+        for h in hist:
+            d = f" d={h['d']}" if h.get("d") else ""
+            line += f"\n    boot#{h['b']} up={h['t']}s {h['ev']}{d}"
+
     if rec.get("past_wrap"):
         line += "  [pasada la marca de 71.58 min]"
 
@@ -230,7 +246,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cmd", choices=["STATUS", "QUIET", "LOUD", "RESET"],
+    ap.add_argument("--cmd", choices=["STATUS", "QUIET", "LOUD", "RESET",
+                                      "HISTORY", "CLEAR_HISTORY"],
                     help="envia un comando al robot y termina")
     ap.add_argument("-o", "--out", default=DEFAULT_LOG,
                     help=f"archivo de log (default {DEFAULT_LOG})")

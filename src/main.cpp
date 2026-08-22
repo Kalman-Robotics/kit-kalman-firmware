@@ -99,6 +99,7 @@ bool     g_have_coredump = false;
 
 // Sobrevive al reset: no la toca el arranque
 RTC_NOINIT_ATTR TraceBuf g_trace;
+RTC_NOINIT_ATTR HistBuf g_hist;
 
 #if DIAG_NO_RESTART
 DiagStats diag;
