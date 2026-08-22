@@ -664,6 +664,15 @@ inline void diagReply(IPAddress to, uint16_t port,
 
 inline void diagSpin() {
   static unsigned long last_hb_ms = 0;
+  static unsigned long last_poll_ms = 0;
+
+  // Sondear el socket en cada iteracion competia con la lectura serial del
+  // LiDAR: cada parsePacket() consulta el stack lwIP, y el loop corre miles de
+  // veces por segundo. Los comandos son esporadicos, asi que 50 ms de
+  // resolucion sobra y deja el bucle libre para drenar el UART del LiDAR.
+  if (millis() - last_poll_ms < 50)
+    return;
+  last_poll_ms = millis();
 
   diagRxWatchdog();
 

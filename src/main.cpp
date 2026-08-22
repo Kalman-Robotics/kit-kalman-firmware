@@ -844,11 +844,17 @@ void loop() {
   // Coste de OTA en el bucle: se mide aparte para poder compararlo contra el
   // baseline sin OTA y decidir si vale la pena dejarlo siempre activo
   {
-    int64_t t0 = esp_timer_get_time();
-    ArduinoOTA.handle();
-    uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
-    if (us > g_ota_handle_max_us)
-      g_ota_handle_max_us = us;
+    // Igual que los otros sondeos UDP: no hace falta en cada iteracion. Una
+    // carga OTA reintenta la invitacion, asi que 50 ms no la impiden.
+    static unsigned long last_ota_ms = 0;
+    if (g_ota_active || millis() - last_ota_ms >= 50) {
+      last_ota_ms = millis();
+      int64_t t0 = esp_timer_get_time();
+      ArduinoOTA.handle();
+      uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
+      if (us > g_ota_handle_max_us)
+        g_ota_handle_max_us = us;
+    }
   }
 
   traceMark(TR_LIDAR);
@@ -870,6 +876,8 @@ void loop() {
   spinControlStatus();
   traceMark(TR_PING);
   spinPing();
+  // Estos tres sondean sockets UDP; hacerlo en cada iteracion le quitaba
+  // tiempo al drenado del UART del LiDAR. Ver el limitador dentro de cada uno.
   spinSession();
   spinSessionLed();
   diagSpin();
