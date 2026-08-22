@@ -54,12 +54,24 @@ class MotorController {
     float getPIDKd();
     float getPIDPeriod();
     void enablePID(bool en);
-    long int getEncoderValue() {
-      return encoderReversed ? -encoder : encoder;
+    // Lectura protegida: el contador lo escriben los ISR de encoder desde el
+    // otro nucleo. Sin la seccion critica se puede leer un valor a medio
+    // actualizar.
+    int32_t getEncoderValue() {
+      int32_t v;
+      portENTER_CRITICAL(&encoderMux);
+      v = encoder;
+      portEXIT_CRITICAL(&encoderMux);
+      return encoderReversed ? -v : v;
     }
 
   protected:
-    volatile long int encoder;
+    // int32_t y no long: en ESP32 un incremento de 32 bits es una sola
+    // instruccion, asi que el ISR no puede dejarlo a medias. A 1050 PPR y
+    // 200 rpm tarda ~2 dias en desbordar, y la resta de deltas es correcta
+    // ante el desborde por ser aritmetica en complemento a dos.
+    volatile int32_t encoder;
+    portMUX_TYPE encoderMux = portMUX_INITIALIZER_UNLOCKED;
     bool encoderReversed;
 
     void setPWM(float value);
@@ -80,21 +92,27 @@ class MotorController {
 
     unsigned int pidUpdatePeriodUs;
     encoder_type_t encoderType;
-    long int encPrev;
+    int32_t encPrev;
     bool setPointHasChanged;
     bool motorReversed;
     unsigned long tickSampleTimePrev;
     bool switchingCw;
 
   public:
-    void tickSignedEncoder(bool increment) {
+    // IRAM_ATTR obligatorio: las llama un ISR. Si quedaran en flash, una
+    // interrupcion de encoder mientras el cacheo esta deshabilitado (escritura
+    // a NVS/SPIFFS, operaciones internas del driver WiFi) provoca un cache miss
+    // con las interrupciones cortadas => int_wdt o panic. Con 4 ISR en CHANGE y
+    // encoders de 1050 PPR la ventana es minuscula pero se abre miles de veces
+    // por segundo.
+    void IRAM_ATTR tickSignedEncoder(bool increment) {
 //      if (increment ^ encoderReversed)
       if (increment)
         encoder = encoder + 1;
       else
         encoder = encoder - 1;
     }
-    void tickUnsignedEncoder() {
+    void IRAM_ATTR tickUnsignedEncoder() {
 //      if (cw ^ encoderReversed)
       if (cw)
         encoder = encoder + 1;

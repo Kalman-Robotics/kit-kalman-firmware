@@ -92,6 +92,12 @@ class SessionLink {
       if (!listening_)
         return false;
 
+      // No sondear en cada iteracion: compite con la lectura serial del LiDAR
+      static unsigned long last_poll_ms = 0;
+      if (millis() - last_poll_ms < 50)
+        return false;
+      last_poll_ms = millis();
+
       int len = udp_.parsePacket();
       if (len <= 0)
         return false;

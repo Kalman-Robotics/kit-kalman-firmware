@@ -198,8 +198,8 @@ void MotorController::update() {
 
   tickSampleTimePrev = tickTime;
 
-  long int encNow = getEncoderValue();
-  long int encDelta = encNow - encPrev;
+  int32_t encNow = getEncoderValue();
+  int32_t encDelta = encNow - encPrev;
   encPrev = encNow;
   float ticksPerMicroSec = ((float) encDelta) / ((float) tickTimeDelta);
   measuredRPM = ticksPerMicroSec * ticksPerMicroSecToRPM;
