@@ -613,21 +613,25 @@ inline String diagReport() {
   return s;
 }
 
-inline void diagSend(IPAddress to, bool broadcast) {
+// port = 0 usa DIAG_PORT; para responder a un comando hay que pasar el puerto
+// de origen del datagrama. Respondiendo siempre a DIAG_PORT, la respuesta
+// competia con el socket que el script tiene enlazado a ese mismo puerto y
+// podia entregarse al destinatario equivocado.
+inline void diagSend(IPAddress to, bool broadcast, uint16_t port = 0) {
   if (WiFi.status() != WL_CONNECTED)
     return;
 
   IPAddress dest = broadcast ? WiFi.broadcastIP() : to;
+  uint16_t dport = (port == 0 || broadcast) ? DIAG_PORT : port;
   String payload = diagReport();
 
-  // Socket de envio dedicado: reusar el de escucha tras un parsePacket() deja
-  // el destino pegado al ultimo remitente
-  WiFiUDP tx;
-  if (tx.beginPacket(dest, DIAG_PORT) == 1) {
-    tx.print(payload);
-    tx.endPacket();
+  // Se responde por el propio socket de escucha para que el datagrama salga
+  // con origen DIAG_PORT. Un socket nuevo tomaria un puerto efimero y quien
+  // filtre las respuestas por su origen las descartaria.
+  if (diag_udp.beginPacket(dest, dport) == 1) {
+    diag_udp.print(payload);
+    diag_udp.endPacket();
   }
-  tx.stop();
   Serial.println(payload);
   g_loop_max_ms_since_report = 0;
 }
@@ -636,7 +640,8 @@ inline void diagSend(IPAddress to, bool broadcast) {
 // Respuesta estandar a un comando. Se responde SIEMPRE, incluso a comandos
 // desconocidos: sin eso no se puede distinguir "no llego" de "llego y no se
 // entiende" de "el chip esta colgado", que desde la Pi se ven igual.
-inline void diagReply(IPAddress to, const char * ack, const char * result) {
+inline void diagReply(IPAddress to, uint16_t port,
+                      const char * ack, const char * result) {
   static uint32_t seq = 0;
   String s = "{\"v\":1,\"ack\":\"";
   s += ack;
@@ -650,12 +655,10 @@ inline void diagReply(IPAddress to, const char * ack, const char * result) {
   s += String(++seq);
   s += "}";
 
-  WiFiUDP tx;
-  if (tx.beginPacket(to, DIAG_PORT) == 1) {
-    tx.print(s);
-    tx.endPacket();
+  if (diag_udp.beginPacket(to, port ? port : DIAG_PORT) == 1) {
+    diag_udp.print(s);
+    diag_udp.endPacket();
   }
-  tx.stop();
   Serial.println(s);
 }
 
@@ -677,6 +680,7 @@ inline void diagSpin() {
       cmd.toUpperCase();
 
       IPAddress from = diag_udp.remoteIP();
+      uint16_t fport = diag_udp.remotePort();
       diagNoteCmd(cmd);
 
       // Separar comando y argumento
@@ -689,10 +693,10 @@ inline void diagSpin() {
       }
 
       if (cmd == "STATUS") {
-        diagSend(from, false);
+        diagSend(from, false, fport);
 
       } else if (cmd == "PING") {
-        diagReply(from, "PING", "OK");
+        diagReply(from, fport, "PING", "OK");
 
       } else if (cmd == "HISTORY") {
         // El historial va aparte: no cabe en el reporte periodico
@@ -701,12 +705,10 @@ inline void diagSpin() {
         h += ",\"hist\":";
         h += histJson();
         h += "}";
-        WiFiUDP tx;
-        if (tx.beginPacket(from, DIAG_PORT) == 1) {
-          tx.print(h);
-          tx.endPacket();
+        if (diag_udp.beginPacket(from, fport ? fport : DIAG_PORT) == 1) {
+          diag_udp.print(h);
+          diag_udp.endPacket();
         }
-        tx.stop();
         Serial.println(h);
 
       } else if (cmd == "CLEAR_HISTORY") {
@@ -714,7 +716,7 @@ inline void diagSpin() {
         g_hist.boots = 0;
         memset(g_hist.e, 0, sizeof(g_hist.e));
         Serial.println("[DIAG] historial borrado");
-        diagReply(from, "CLEAR_HISTORY", "OK");
+        diagReply(from, fport, "CLEAR_HISTORY", "OK");
 
       } else if (cmd == "RESET" || cmd == "RESET_COUNTERS") {
         diag = DiagStats();
@@ -725,25 +727,25 @@ inline void diagSpin() {
         g_rx_stall_log_n = 0;
         g_ota_handle_max_us = 0;
         Serial.println("[DIAG] contadores reiniciados");
-        diagReply(from, "RESET_COUNTERS", "OK");
+        diagReply(from, fport, "RESET_COUNTERS", "OK");
 
       } else if (cmd == "STOP_MOTORS") {
         diagStopMotors();
-        diagReply(from, "STOP_MOTORS", "OK");
+        diagReply(from, fport, "STOP_MOTORS", "OK");
 
       } else if (cmd == "RESET_ODOM") {
         diagResetOdom();
-        diagReply(from, "RESET_ODOM", "OK");
+        diagReply(from, fport, "RESET_ODOM", "OK");
 
       } else if (cmd == "REBOOT" || cmd == "REBOOT_SAFE") {
         // Token: ultimos 4 hex de la MAC. No es seguridad (la red esta
         // aislada) sino proteccion contra un reinicio accidental por un bug
         // en la Pi durante una clase.
         if (arg != diagRebootToken()) {
-          diagReply(from, cmd.c_str(), "ERR bad_token");
+          diagReply(from, fport, cmd.c_str(), "ERR bad_token");
         } else {
           bool safe = (cmd == "REBOOT_SAFE");
-          diagReply(from, cmd.c_str(), "OK");
+          diagReply(from, fport, cmd.c_str(), "OK");
           if (safe) {
             diagStopMotors();
             delay(100);
@@ -757,7 +759,7 @@ inline void diagSpin() {
         }
 
       } else {
-        diagReply(from, cmd.c_str(), "UNKNOWN");
+        diagReply(from, fport, cmd.c_str(), "UNKNOWN");
       }
     }
   }

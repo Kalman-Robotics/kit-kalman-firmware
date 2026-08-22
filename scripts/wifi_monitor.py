@@ -167,7 +167,10 @@ def send_command(cmd: str, addr: str, port: int) -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("", port))
+    # Puerto efimero, no el del robot: si este socket se enlaza al 8891 compite
+    # con el listener del heartbeat por las respuestas unicast y el kernel
+    # puede entregarlas al otro. El firmware responde al puerto de origen.
+    sock.bind(("", 0))
     sock.settimeout(0.2)
 
     for i in range(CMD_REPEAT):
