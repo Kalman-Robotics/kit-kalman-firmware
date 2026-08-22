@@ -20,6 +20,7 @@
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
 #include <esp_core_dump.h>
+#include "robot_config.h"
 
 // Modo diagnostico para pruebas de larga duracion.
 //
@@ -590,6 +591,9 @@ inline String diagReport() {
     (long)((esp_timer_get_time() - g_last_cmd_us) / 1000000) : -1); s += ",";
   s += "\"cmd_count\":";       s += String(g_cmd_count); s += ",";
   s += "\"ota\":";             s += (g_ota_active ? "true" : "false"); s += ",";
+  // Version del firmware: permite confirmar por UDP que una carga OTA se
+  // aplico, sin depender del puerto serie
+  s += "\"fw\":\"";            s += CONFIG::FW_VERSION; s += "\",";
   s += "\"ota_handle_us\":";   s += String(g_ota_handle_max_us); s += ",";
   s += "\"odom_x\":";          s += String(diagOdomX(), 3); s += ",";
   s += "\"odom_yaw\":";        s += String(diagOdomYaw(), 3); s += ",";
