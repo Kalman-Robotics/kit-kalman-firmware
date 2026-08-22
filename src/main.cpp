@@ -20,7 +20,6 @@
 #include "util.h"
 #include "session.h"
 #include "diag.h"
-#include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <stdio.h>
 #include "motors.h"
@@ -92,21 +91,6 @@ uint32_t g_rx_stall_max_s = 0;
 bool     g_rx_stalled = false;
 uint32_t g_rx_stall_at_s[RX_STALL_LOG_LEN] = {0};
 uint8_t  g_rx_stall_log_n = 0;
-
-// Resumen del ultimo core dump, si lo hay
-uint32_t g_panic_pc = 0;
-char     g_panic_task[16] = {0};
-bool     g_have_coredump = false;
-
-// Sobrevive al reset: no la toca el arranque
-RTC_NOINIT_ATTR TraceBuf g_trace;
-RTC_NOINIT_ATTR HistBuf g_hist;
-
-char     g_last_cmd[24] = {0};
-int64_t  g_last_cmd_us = 0;
-uint32_t g_cmd_count = 0;
-bool     g_ota_active = false;
-uint32_t g_ota_handle_max_us = 0;
 
 #if DIAG_NO_RESTART
 DiagStats diag;
@@ -688,98 +672,6 @@ void sessionToIdle(const char * reason) {
 }
 
 // Procesa los avisos de la Raspberry y administra el periodo de gracia.
-// Puentes usados por diag.h para atender los comandos de control
-const char * diagSessionState() { return sessionStateName(session_state); }
-
-void diagStopMotors() {
-  ramp_target_rpm_right = 0;
-  ramp_target_rpm_left = 0;
-  setMotorSpeeds(0, 0);
-}
-
-void diagResetOdom() {
-  nexus_msg.odom_pos_x = 0;
-  nexus_msg.odom_pos_y = 0;
-  nexus_msg.odom_pos_yaw = 0;
-  nexus_msg.odom_vel_x = 0;
-  nexus_msg.odom_vel_yaw = 0;
-}
-
-// Ultimos 4 hex de la MAC
-String diagRebootToken() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char t[5];
-  snprintf(t, sizeof(t), "%02X%02X", mac[4], mac[5]);
-  return String(t);
-}
-
-float diagOdomX()   { return nexus_msg.odom_pos_x; }
-float diagOdomYaw() { return nexus_msg.odom_pos_yaw; }
-
-void diagNoteCmd(const String & cmd) {
-  strncpy(g_last_cmd, cmd.c_str(), sizeof(g_last_cmd) - 1);
-  g_last_cmd[sizeof(g_last_cmd) - 1] = 0;
-  g_last_cmd_us = esp_timer_get_time();
-  g_cmd_count++;
-}
-
-// Actualizacion por WiFi. La tabla default_8MB ya reserva dos particiones de
-// aplicacion de 3.34 MB cada una y la imagen ocupa 1.13 MB, asi que no hay que
-// reorganizar el flash: OTA escribe en la particion inactiva y, si la carga se
-// corta a mitad, el bootloader sigue arrancando la anterior.
-void setupOTA() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char host[32];
-  snprintf(host, sizeof(host), "esp32s3-%02X%02X%02X",
-           mac[3], mac[4], mac[5]);
-
-  ArduinoOTA.setHostname(host);
-  ArduinoOTA.setPassword(cfg.OTA_PASSWORD);
-
-  ArduinoOTA.onStart([]() {
-    // Parar todo antes de flashear: la escritura bloquea el loop varios
-    // segundos y un robot en movimiento no tendria quien lo frene
-    Serial.println("[OTA] inicio: parando motores y LiDAR");
-    ramp_target_rpm_right = 0;
-    ramp_target_rpm_left = 0;
-    setMotorSpeeds(0, 0);
-    lidar->stop();
-    // Sin esto el watchdog de RX podria provocar un panic a mitad de la carga
-    g_ota_active = true;
-    histAdd(INC_OTA_START);
-  });
-
-  ArduinoOTA.onEnd([]() {
-    Serial.println("[OTA] completado, reiniciando");
-    Serial.flush();
-  });
-
-  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
-    static uint8_t last_pct = 255;
-    uint8_t pct = total ? (done * 100) / total : 0;
-    if (pct != last_pct && pct % 10 == 0) {
-      last_pct = pct;
-      Serial.print("[OTA] ");
-      Serial.print(pct);
-      Serial.println("%");
-    }
-  });
-
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.print("[OTA] error ");
-    Serial.println(error);
-    // La carga fallo: el bootloader seguira arrancando la particion anterior
-    g_ota_active = false;
-    lidar->start();
-  });
-
-  ArduinoOTA.begin();
-  Serial.print("OTA activo, hostname ");
-  Serial.println(host);
-}
-
 void spinSession() {
   String event;
   if (session_link.poll(event, session_state)) {
@@ -838,30 +730,11 @@ void spinSessionLed() {
 }
 
 void loop() {
-  traceMark(TR_LOOP);
   bool wifi_ok = spinWiFi();
 
-  // Coste de OTA en el bucle: se mide aparte para poder compararlo contra el
-  // baseline sin OTA y decidir si vale la pena dejarlo siempre activo
-  {
-    // Igual que los otros sondeos UDP: no hace falta en cada iteracion. Una
-    // carga OTA reintenta la invitacion, asi que 50 ms no la impiden.
-    static unsigned long last_ota_ms = 0;
-    if (g_ota_active || millis() - last_ota_ms >= 50) {
-      last_ota_ms = millis();
-      int64_t t0 = esp_timer_get_time();
-      ArduinoOTA.handle();
-      uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
-      if (us > g_ota_handle_max_us)
-        g_ota_handle_max_us = us;
-    }
-  }
-
-  traceMark(TR_LIDAR);
   lidar->loop();
 
   // Process micro-ROS callbacks
-  traceMark(TR_EXECUTOR);
   rcl_ret_t ret = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
   if (ret != RCL_RET_OK) {
     Serial.print("rclc_executor_spin_some() error ");
@@ -871,13 +744,9 @@ void loop() {
   updateROSParams();
   int64_t time_now_us = esp_timer_get_time();
   spinIMU(time_now_us);
-  traceMark(TR_TELEM);
   spinTelem(false);
   spinControlStatus();
-  traceMark(TR_PING);
   spinPing();
-  // Estos tres sondean sockets UDP; hacerlo en cada iteracion le quitaba
-  // tiempo al drenado del UART del LiDAR. Ver el limitador dentro de cada uno.
   spinSession();
   spinSessionLed();
   diagSpin();
@@ -900,7 +769,6 @@ void loop() {
     updateSpeedRamp();
   }
 
-  traceMark(TR_MOTORS);
   motorLeft.update();
   motorRight.update();
 
@@ -1179,7 +1047,6 @@ void setup() {
   // poder recibir avisos incluso mientras se espera
   session_link.begin(cfg.SESSION_UDP_PORT);
   diagBegin();
-  setupOTA();
 
   set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
   delay(100); // asentar el socket UDP; si no basta, setupMicroROS() reintenta

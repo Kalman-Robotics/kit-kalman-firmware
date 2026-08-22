@@ -19,8 +19,6 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
-#include <esp_core_dump.h>
-#include "robot_config.h"
 
 // Modo diagnostico para pruebas de larga duracion.
 //
@@ -39,24 +37,6 @@
 #ifndef DIAG_NO_RESTART
 #define DIAG_NO_RESTART 0
 #endif
-
-// Puentes hacia el resto del firmware. diag.h no puede incluir motors.h ni
-// session.h sin crear un ciclo de inclusiones, asi que se definen en main.cpp.
-const char * diagSessionState();  // evita depender de session.h
-void diagStopMotors();
-void diagResetOdom();
-String diagRebootToken();
-void diagNoteCmd(const String & cmd);
-float diagOdomX();
-float diagOdomYaw();
-
-// Ultimo comando recibido: al revisar un incidente responde a una pregunta
-// concreta, si alguien mando algo justo antes
-extern char     g_last_cmd[24];
-extern int64_t  g_last_cmd_us;
-extern uint32_t g_cmd_count;
-extern bool     g_ota_active;   // carga OTA en curso
-extern uint32_t g_ota_handle_max_us;  // coste de ArduinoOTA.handle()
 
 // ---------------------------------------------------------------------------
 // Forense de reinicios. Disponible en los dos modos: un reinicio de hardware
@@ -104,140 +84,6 @@ extern uint8_t  g_rx_stall_log_n;
 // solo paquete entrante no puede ser normal.
 static const int64_t RX_STALL_US = 10LL * 1000 * 1000;
 
-inline const char * resetReasonName(esp_reset_reason_t r);
-
-// ---------------------------------------------------------------------------
-// Historial de incidentes, tambien en RTC RAM.
-//
-// Los contadores de diag viven en RAM normal y se pierden en cada reinicio, asi
-// que tras un cuelgue no queda rastro de lo que paso antes. Este historial
-// sobrevive a panic, watchdog y brownout, y guarda los ultimos 16 eventos con
-// el uptime en que ocurrieron: permite reconstruir la secuencia aunque el robot
-// se haya reiniciado varias veces.
-//
-// Solo lo borra un corte de alimentacion o el comando CLEAR_HISTORY.
-// ---------------------------------------------------------------------------
-
-enum incident_t {
-  INC_BOOT = 1,          // arranque; data = motivo del reset
-  INC_RX_STALL = 2,      // RX detenido; data = segundos de silencio
-  INC_RX_RECOVER = 3,    // RX restablecido
-  INC_AGENT_LOST = 4,    // agente micro-ROS perdido
-  INC_AGENT_BACK = 5,    // agente recuperado
-  INC_WIFI_LOST = 6,
-  INC_WIFI_BACK = 7,
-  INC_PANIC_FORCED = 8,  // volcado provocado por RX muerto
-  INC_LOOP_SLOW = 9,     // el bucle supero el umbral; data = ms
-  INC_OTA_START = 10,    // comienzo de una carga OTA
-};
-
-inline const char * incidentName(uint8_t t) {
-  switch (t) {
-    case INC_BOOT:         return "boot";
-    case INC_RX_STALL:     return "rx_stall";
-    case INC_RX_RECOVER:   return "rx_recover";
-    case INC_AGENT_LOST:   return "agent_lost";
-    case INC_AGENT_BACK:   return "agent_back";
-    case INC_WIFI_LOST:    return "wifi_lost";
-    case INC_WIFI_BACK:    return "wifi_back";
-    case INC_PANIC_FORCED: return "panic_forced";
-    case INC_LOOP_SLOW:    return "loop_slow";
-    case INC_OTA_START:    return "ota_start";
-    default:               return "?";
-  }
-}
-
-#define HIST_LEN   16
-#define HIST_MAGIC 0x48495331  // "HIS1"
-
-struct HistBuf {
-  uint32_t magic;
-  uint16_t idx;
-  uint16_t boots;        // reinicios desde el ultimo corte de alimentacion
-  struct {
-    uint32_t up_s;       // uptime dentro de ESE arranque
-    uint16_t boot;       // en que arranque ocurrio
-    uint8_t  type;
-    uint16_t data;
-  } e[HIST_LEN];
-};
-
-extern RTC_NOINIT_ATTR HistBuf g_hist;
-
-inline void histAdd(uint8_t type, uint16_t data = 0) {
-  if (g_hist.magic != HIST_MAGIC)
-    return;  // aun no inicializado
-  uint16_t i = g_hist.idx;
-  g_hist.e[i].up_s = (uint32_t)(esp_timer_get_time() / 1000000);
-  g_hist.e[i].boot = g_hist.boots;
-  g_hist.e[i].type = type;
-  g_hist.e[i].data = data;
-  g_hist.idx = (i + 1) % HIST_LEN;
-}
-
-inline void histBegin(uint8_t reset_reason) {
-  if (g_hist.magic != HIST_MAGIC) {
-    // Primer arranque tras un corte de alimentacion
-    g_hist.magic = HIST_MAGIC;
-    g_hist.idx = 0;
-    g_hist.boots = 0;
-    memset(g_hist.e, 0, sizeof(g_hist.e));
-  }
-  g_hist.boots++;
-  histAdd(INC_BOOT, reset_reason);
-}
-
-// Vuelca el historial por serie, mas antiguo primero
-inline void histDump() {
-  if (g_hist.magic != HIST_MAGIC)
-    return;
-  Serial.print("[DIAG] historial de incidentes (");
-  Serial.print(g_hist.boots);
-  Serial.println(" arranques desde el ultimo corte de alimentacion):");
-  for (uint16_t k = 0; k < HIST_LEN; k++) {
-    uint16_t i = (g_hist.idx + k) % HIST_LEN;
-    if (g_hist.e[i].type == 0)
-      continue;
-    Serial.print("  boot#");
-    Serial.print(g_hist.e[i].boot);
-    Serial.print(" up=");
-    Serial.print(g_hist.e[i].up_s);
-    Serial.print("s ");
-    Serial.print(incidentName(g_hist.e[i].type));
-    if (g_hist.e[i].type == INC_BOOT) {
-      Serial.print(" (");
-      Serial.print(resetReasonName((esp_reset_reason_t)g_hist.e[i].data));
-      Serial.print(")");
-    } else if (g_hist.e[i].data) {
-      Serial.print(" d=");
-      Serial.print(g_hist.e[i].data);
-    }
-    Serial.println();
-  }
-}
-
-// El historial en JSON, para que viaje por UDP sin depender del serie
-inline String histJson() {
-  String s = "[";
-  if (g_hist.magic == HIST_MAGIC) {
-    bool first = true;
-    for (uint16_t k = 0; k < HIST_LEN; k++) {
-      uint16_t i = (g_hist.idx + k) % HIST_LEN;
-      if (g_hist.e[i].type == 0)
-        continue;
-      if (!first) s += ",";
-      first = false;
-      s += "{\"b\":";     s += String(g_hist.e[i].boot);
-      s += ",\"t\":";     s += String(g_hist.e[i].up_s);
-      s += ",\"ev\":\"";   s += incidentName(g_hist.e[i].type);
-      s += "\",\"d\":";    s += String(g_hist.e[i].data);
-      s += "}";
-    }
-  }
-  s += "]";
-  return s;
-}
-
 // Llamar cada vez que llega algo desde la red
 inline void diagNoteRx() {
   g_rx_count++;
@@ -245,27 +91,14 @@ inline void diagNoteRx() {
   if (g_rx_stalled) {
     uint32_t stall_s = 0;
     g_rx_stalled = false;
-    histAdd(INC_RX_RECOVER);
     Serial.print("[DIAG] RX restablecido tras ");
     Serial.print(stall_s);
     Serial.println("s");
   }
 }
 
-// Si el RX lleva demasiado tiempo muerto, provocar un panic a proposito: eso
-// dispara el core dump y deja la fotografia del estado. Sin esto, el episodio
-// del 22-ago dejo el chip inerte 10 h sin panic y por tanto sin volcado.
-// Solo actua muy pasado el umbral de deteccion, para no interferir con cortes
-// que se recuperan solos.
-static const uint32_t RX_STALL_PANIC_S = 120;
-
 // Vigila el silencio de entrada. Se llama desde loop().
 inline void diagRxWatchdog() {
-  // Durante una carga OTA el loop se bloquea escribiendo a flash y el trafico
-  // entrante lo consume ArduinoOTA, no diagNoteRx(): sin esta guarda el
-  // watchdog veria silencio y podria provocar un panic a mitad del flasheo
-  if (g_ota_active)
-    return;
   if (WiFi.status() != WL_CONNECTED || g_last_rx_us == 0)
     return;
 
@@ -298,15 +131,6 @@ inline void diagRxWatchdog() {
     Serial.print(WiFi.status());
     Serial.print(" rssi=");
     Serial.println(WiFi.RSSI());
-    histAdd(INC_RX_STALL, (uint16_t)silence_s);
-  }
-
-  // Forzar el volcado cuando el corte ya no se va a recuperar
-  if (silence_s >= RX_STALL_PANIC_S) {
-    Serial.println("[DIAG] RX muerto demasiado tiempo: provocando core dump");
-    histAdd(INC_PANIC_FORCED, (uint16_t)silence_s);
-    Serial.flush();
-    assert(false && "rx_stall: volcado forzado para capturar el estado");
   }
 }
 
@@ -342,136 +166,6 @@ inline void diagLoopTick() {
   loop_start_us = esp_timer_get_time();
 }
 
-// ---------------------------------------------------------------------------
-// Resumen del ultimo core dump.
-//
-// El framework de Arduino ya trae CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y con
-// formato ELF, asi que los cuelgues anteriores YA escribieron su volcado en la
-// particion coredump. Publicarlo por UDP evita tener que conectar el USB para
-// saber donde murio.
-//
-// panic_pc se traduce a linea de codigo con:
-//   xtensa-esp32s3-elf-addr2line -pfiaC -e .pio/build/<env>/firmware.elf 0x<PC>
-// ---------------------------------------------------------------------------
-
-extern uint32_t g_panic_pc;
-extern char     g_panic_task[16];
-extern bool     g_have_coredump;
-
-// ---------------------------------------------------------------------------
-// Traza circular en RTC RAM.
-//
-// El reporte cada 30 s es demasiado grueso: el cuelgue ocurre entre dos
-// muestras y no se ve la transicion. Esta traza guarda los ultimos 128 eventos
-// del loop en memoria RTC no inicializada, que SOBREVIVE a un reset (panic,
-// watchdog o brownout), y se vuelca al arrancar. Dice en que punto del loop se
-// quedo, incluso si el core dump fallara.
-// ---------------------------------------------------------------------------
-
-enum trace_ev_t {
-  TR_LOOP = 1,
-  TR_LIDAR = 2,
-  TR_EXECUTOR = 3,
-  TR_PING = 4,
-  TR_TELEM = 5,
-  TR_CMD_VEL = 6,
-  TR_MOTORS = 7,
-  TR_SESSION = 8,
-};
-
-inline const char * traceEvName(uint8_t e) {
-  switch (e) {
-    case TR_LOOP:     return "loop";
-    case TR_LIDAR:    return "lidar";
-    case TR_EXECUTOR: return "executor";
-    case TR_PING:     return "ping";
-    case TR_TELEM:    return "telem";
-    case TR_CMD_VEL:  return "cmd_vel";
-    case TR_MOTORS:   return "motors";
-    case TR_SESSION:  return "session";
-    default:          return "?";
-  }
-}
-
-#define TRACE_LEN   128
-#define TRACE_MAGIC 0x54524331  // "TRC1"
-
-struct TraceBuf {
-  uint32_t magic;
-  uint16_t idx;
-  struct {
-    uint32_t t_ms;
-    uint8_t  ev;
-    uint16_t data;
-  } e[TRACE_LEN];
-};
-
-extern RTC_NOINIT_ATTR TraceBuf g_trace;
-
-
-// Muy barata a proposito: la llama el loop miles de veces por segundo.
-// Sin IRAM_ATTR: solo la usa el loop, nunca un ISR, y marcarla como inline en
-// IRAM provoca errores de relocacion al enlazar.
-inline void traceMark(uint8_t ev, uint16_t data = 0) {
-  uint16_t i = g_trace.idx;
-  g_trace.e[i].t_ms = (uint32_t)(esp_timer_get_time() / 1000);
-  g_trace.e[i].ev = ev;
-  g_trace.e[i].data = data;
-  g_trace.idx = (i + 1) % TRACE_LEN;
-}
-
-// Vuelca por serie la traza del arranque anterior, si es valida
-inline void diagDumpTrace() {
-  if (g_trace.magic != TRACE_MAGIC) {
-    // Primer arranque o RAM perdida: inicializar
-    g_trace.magic = TRACE_MAGIC;
-    g_trace.idx = 0;
-    memset(g_trace.e, 0, sizeof(g_trace.e));
-    return;
-  }
-
-  Serial.println("[DIAG] traza del arranque anterior (mas reciente al final):");
-  uint16_t start = g_trace.idx;
-  for (uint16_t k = 0; k < TRACE_LEN; k++) {
-    uint16_t i = (start + k) % TRACE_LEN;
-    if (g_trace.e[i].t_ms == 0)
-      continue;
-    Serial.print("  t=");
-    Serial.print(g_trace.e[i].t_ms);
-    Serial.print("ms ");
-    Serial.print(traceEvName(g_trace.e[i].ev));
-    if (g_trace.e[i].data) {
-      Serial.print(" d=");
-      Serial.print(g_trace.e[i].data);
-    }
-    Serial.println();
-  }
-  g_trace.idx = 0;
-  memset(g_trace.e, 0, sizeof(g_trace.e));
-}
-
-inline void diagReadCoreDump() {
-  esp_core_dump_summary_t * sum =
-    (esp_core_dump_summary_t *) malloc(sizeof(esp_core_dump_summary_t));
-  if (sum == NULL)
-    return;
-
-  if (esp_core_dump_get_summary(sum) == ESP_OK) {
-    g_have_coredump = true;
-    g_panic_pc = sum->exc_pc;
-    strncpy(g_panic_task, sum->exc_task, sizeof(g_panic_task) - 1);
-    g_panic_task[sizeof(g_panic_task) - 1] = 0;
-
-    Serial.print("[DIAG] core dump del cuelgue anterior: PC=0x");
-    Serial.print(g_panic_pc, HEX);
-    Serial.print(" tarea=");
-    Serial.println(g_panic_task);
-    Serial.println("[DIAG] traducir con: xtensa-esp32s3-elf-addr2line -pfiaC "
-                   "-e .pio/build/<env>/firmware.elf 0x<PC>");
-  }
-  free(sum);
-}
-
 inline void diagLogResetReason() {
   Serial.print("[DIAG] motivo del ultimo reset: ");
   Serial.print(resetReasonName(g_rst_reason));
@@ -479,10 +173,6 @@ inline void diagLogResetReason() {
   Serial.print((int)g_rst_reason);
   Serial.print("), heap libre ");
   Serial.println(ESP.getFreeHeap());
-  diagReadCoreDump();
-  histBegin((uint8_t)g_rst_reason);
-  histDump();
-  diagDumpTrace();
 }
 
 #if DIAG_NO_RESTART
@@ -579,28 +269,6 @@ inline String diagReport() {
   // Si WiFi.status() sigue en WL_CONNECTED (3) durante el fallo, el problema
   // esta por debajo de la capa Arduino
   s += "\"wifi_status\":";     s += String((int)WiFi.status()); s += ",";
-  // Numero de arranques desde el ultimo corte de alimentacion: si crece,
-  // el robot se esta reiniciando solo
-  s += "\"boots\":";           s += String(g_hist.boots); s += ",";
-  // Estado de sesion: evita tener que sondear el 8889 para saber la fase
-  s += "\"session_state\":\"";  s += diagSessionState(); s += "\",";
-  // Ultimo comando recibido: al revisar un incidente, saber si alguien mando
-  // algo justo antes
-  s += "\"last_cmd\":\"";       s += g_last_cmd; s += "\",";
-  s += "\"last_cmd_s\":";      s += String(g_last_cmd_us > 0 ?
-    (long)((esp_timer_get_time() - g_last_cmd_us) / 1000000) : -1); s += ",";
-  s += "\"cmd_count\":";       s += String(g_cmd_count); s += ",";
-  s += "\"ota\":";             s += (g_ota_active ? "true" : "false"); s += ",";
-  // Version del firmware: permite confirmar por UDP que una carga OTA se
-  // aplico, sin depender del puerto serie
-  s += "\"fw\":\"";            s += CONFIG::FW_VERSION; s += "\",";
-  s += "\"ota_handle_us\":";   s += String(g_ota_handle_max_us); s += ",";
-  s += "\"odom_x\":";          s += String(diagOdomX(), 3); s += ",";
-  s += "\"odom_yaw\":";        s += String(diagOdomYaw(), 3); s += ",";
-  if (g_have_coredump) {
-    s += "\"panic_pc\":\"0x";     s += String(g_panic_pc, HEX); s += "\",";
-    s += "\"panic_task\":\"";     s += g_panic_task; s += "\",";
-  }
   {
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
@@ -613,162 +281,52 @@ inline String diagReport() {
   return s;
 }
 
-// port = 0 usa DIAG_PORT; para responder a un comando hay que pasar el puerto
-// de origen del datagrama. Respondiendo siempre a DIAG_PORT, la respuesta
-// competia con el socket que el script tiene enlazado a ese mismo puerto y
-// podia entregarse al destinatario equivocado.
-inline void diagSend(IPAddress to, bool broadcast, uint16_t port = 0) {
+inline void diagSend(IPAddress to, bool broadcast) {
   if (WiFi.status() != WL_CONNECTED)
     return;
 
   IPAddress dest = broadcast ? WiFi.broadcastIP() : to;
-  uint16_t dport = (port == 0 || broadcast) ? DIAG_PORT : port;
   String payload = diagReport();
 
-  // Se responde por el propio socket de escucha para que el datagrama salga
-  // con origen DIAG_PORT. Un socket nuevo tomaria un puerto efimero y quien
-  // filtre las respuestas por su origen las descartaria.
-  if (diag_udp.beginPacket(dest, dport) == 1) {
-    diag_udp.print(payload);
-    diag_udp.endPacket();
+  // Socket de envio dedicado: reusar el de escucha tras un parsePacket() deja
+  // el destino pegado al ultimo remitente
+  WiFiUDP tx;
+  if (tx.beginPacket(dest, DIAG_PORT) == 1) {
+    tx.print(payload);
+    tx.endPacket();
   }
+  tx.stop();
   Serial.println(payload);
   g_loop_max_ms_since_report = 0;
 }
 
 // Heartbeat periodico y atencion de comandos (STATUS / RESET)
-// Respuesta estandar a un comando. Se responde SIEMPRE, incluso a comandos
-// desconocidos: sin eso no se puede distinguir "no llego" de "llego y no se
-// entiende" de "el chip esta colgado", que desde la Pi se ven igual.
-inline void diagReply(IPAddress to, uint16_t port,
-                      const char * ack, const char * result) {
-  static uint32_t seq = 0;
-  String s = "{\"v\":1,\"ack\":\"";
-  s += ack;
-  s += "\",\"result\":\"";
-  s += result;
-  s += "\",\"state\":\"";
-  s += diagSessionState();
-  s += "\",\"up_s\":";
-  s += String((uint32_t)(esp_timer_get_time() / 1000000));
-  s += ",\"seq\":";
-  s += String(++seq);
-  s += "}";
-
-  if (diag_udp.beginPacket(to, port ? port : DIAG_PORT) == 1) {
-    diag_udp.print(s);
-    diag_udp.endPacket();
-  }
-  Serial.println(s);
-}
-
 inline void diagSpin() {
   static unsigned long last_hb_ms = 0;
-  static unsigned long last_poll_ms = 0;
-
-  // Sondear el socket en cada iteracion competia con la lectura serial del
-  // LiDAR: cada parsePacket() consulta el stack lwIP, y el loop corre miles de
-  // veces por segundo. Los comandos son esporadicos, asi que 50 ms de
-  // resolucion sobra y deja el bucle libre para drenar el UART del LiDAR.
-  if (millis() - last_poll_ms < 50)
-    return;
-  last_poll_ms = millis();
 
   diagRxWatchdog();
 
   int len = diag_udp.parsePacket();
   if (len > 0) {
     diagNoteRx();
-    // 128 bytes: los comandos con argumento (REBOOT <token>) no entran en 32
-    char buf[128];
+    char buf[32];
     int n = diag_udp.read(buf, sizeof(buf) - 1);
     if (n > 0) {
-      buf[n] = 0;
+      buf[n] = '\0';
       String cmd(buf);
       cmd.trim();
       cmd.toUpperCase();
-
-      IPAddress from = diag_udp.remoteIP();
-      uint16_t fport = diag_udp.remotePort();
-      diagNoteCmd(cmd);
-
-      // Separar comando y argumento
-      String arg = "";
-      int sp = cmd.indexOf(' ');
-      if (sp > 0) {
-        arg = cmd.substring(sp + 1);
-        arg.trim();
-        cmd = cmd.substring(0, sp);
-      }
-
       if (cmd == "STATUS") {
-        diagSend(from, false, fport);
-
-      } else if (cmd == "PING") {
-        diagReply(from, fport, "PING", "OK");
-
-      } else if (cmd == "HISTORY") {
-        // El historial va aparte: no cabe en el reporte periodico
-        String h = "{\"v\":1,\"ack\":\"HISTORY\",\"boots\":";
-        h += String(g_hist.boots);
-        h += ",\"hist\":";
-        h += histJson();
-        h += "}";
-        if (diag_udp.beginPacket(from, fport ? fport : DIAG_PORT) == 1) {
-          diag_udp.print(h);
-          diag_udp.endPacket();
-        }
-        Serial.println(h);
-
-      } else if (cmd == "CLEAR_HISTORY") {
-        g_hist.idx = 0;
-        g_hist.boots = 0;
-        memset(g_hist.e, 0, sizeof(g_hist.e));
-        Serial.println("[DIAG] historial borrado");
-        diagReply(from, fport, "CLEAR_HISTORY", "OK");
-
-      } else if (cmd == "RESET" || cmd == "RESET_COUNTERS") {
+        diagSend(diag_udp.remoteIP(), false);
+      } else if (cmd == "RESET") {
         diag = DiagStats();
         g_loop_max_ms = 0;
         g_loop_max_ms_since_report = 0;
         g_rx_stalls = 0;
         g_rx_stall_max_s = 0;
         g_rx_stall_log_n = 0;
-        g_ota_handle_max_us = 0;
         Serial.println("[DIAG] contadores reiniciados");
-        diagReply(from, fport, "RESET_COUNTERS", "OK");
-
-      } else if (cmd == "STOP_MOTORS") {
-        diagStopMotors();
-        diagReply(from, fport, "STOP_MOTORS", "OK");
-
-      } else if (cmd == "RESET_ODOM") {
-        diagResetOdom();
-        diagReply(from, fport, "RESET_ODOM", "OK");
-
-      } else if (cmd == "REBOOT" || cmd == "REBOOT_SAFE") {
-        // Token: ultimos 4 hex de la MAC. No es seguridad (la red esta
-        // aislada) sino proteccion contra un reinicio accidental por un bug
-        // en la Pi durante una clase.
-        if (arg != diagRebootToken()) {
-          diagReply(from, fport, cmd.c_str(), "ERR bad_token");
-        } else {
-          bool safe = (cmd == "REBOOT_SAFE");
-          diagReply(from, fport, cmd.c_str(), "OK");
-          if (safe) {
-            diagStopMotors();
-            delay(100);
-          }
-          Serial.println("[DIAG] reinicio remoto solicitado");
-          Serial.flush();
-          delay(200);
-          // Excepcion explicita a DIAG_NO_RESTART: un REBOOT pedido a mano
-          // debe reiniciar tambien en el build de diagnostico
-          ESP.restart();
-        }
-
-      } else {
-        diagReply(from, fport, cmd.c_str(), "UNKNOWN");
+        diagSend(diag_udp.remoteIP(), false);
       }
     }
   }

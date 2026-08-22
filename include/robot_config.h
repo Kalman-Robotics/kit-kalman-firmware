@@ -17,7 +17,7 @@
 
 class CONFIG {
 public:
-  static constexpr char* FW_VERSION = (char*)"0.8.4-iron-ota";
+  static constexpr char* FW_VERSION = (char*)"0.8.3-iron";
   static constexpr char* CONFIG_YAML_PATH = (char *)"/config.yaml";
   static constexpr char* NETWORK_YAML_PATH = (char *)"/network.yaml";
   static constexpr char* INDEX_HTML_PATH = (char *)"/index.html";
@@ -93,9 +93,6 @@ public:
 
   // Canal de control de sesion (UDP con la Raspberry). Ver include/session.h
   static const uint16_t SESSION_UDP_PORT = 8889;
-  // Clave de la actualizacion por WiFi. La red esta aislada, asi que protege
-  // sobre todo contra una carga accidental desde otra maquina.
-  static constexpr char * OTA_PASSWORD = (char *)"kalman2024";
   // Cuanto reintentar tras perder el agente antes de darlo por fin de sesion.
   // Solo aplica si la Raspberry no avisa SESSION_END, que corta la espera ya.
   static const uint32_t SESSION_GRACE_MS = 120000;

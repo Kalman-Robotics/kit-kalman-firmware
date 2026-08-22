@@ -17,7 +17,6 @@
 #include <motor_ctl_kalman.h>
 #include "robot_config.h"
 #include "util.h"
-#include <soc/gpio_struct.h>
 
 const uint8_t MOTOR_COUNT = 2;
 MotorController motorLeft, motorRight;
@@ -34,30 +33,6 @@ enum motor_encoder_t {
 
 motor_driver_t motorDriverType;
 
-// Un ISR no puede tocar flash: si salta mientras el cacheo esta deshabilitado
-// (escritura a NVS/SPIFFS, operaciones internas del driver WiFi) provoca un
-// cache miss con las interrupciones cortadas, y eso es un int_wdt o un panic.
-//
-// Por eso los pines se copian a RAM en setupMotors() en vez de leerse de cfg
-// dentro del ISR, y la lectura del GPIO se hace directo sobre el registro:
-// digitalRead() de Arduino-ESP32 no esta en IRAM.
-//
-// Con 4 ISR en modo CHANGE y encoders de 1050 PPR se ejecutan miles de veces
-// por segundo, asi que la ventana de coincidencia con una operacion de flash
-// es minuscula pero se abre constantemente. Encaja con los tiempos aleatorios
-// observados (22 min a 12 h 35 min) sin degradacion previa de ningun recurso.
-static uint8_t isr_left_a_pin  = 255;
-static uint8_t isr_left_b_pin  = 255;
-static uint8_t isr_right_a_pin = 255;
-static uint8_t isr_right_b_pin = 255;
-
-// Lectura del nivel de un GPIO sin salir de IRAM
-static inline bool IRAM_ATTR fastGpioRead(uint8_t pin) {
-  if (pin < 32)
-    return (GPIO.in >> pin) & 0x1;
-  return (GPIO.in1.val >> (pin - 32)) & 0x1;
-}
-
 void IRAM_ATTR unsignedEncoderLeftISR() {
   motorLeft.tickUnsignedEncoder();
 }
@@ -67,26 +42,26 @@ void IRAM_ATTR unsignedEncoderRightISR() {
 }
 
 void IRAM_ATTR quadEncoderALeftISR() {
-  bool enc_a = fastGpioRead(isr_left_a_pin);
-  bool enc_b = fastGpioRead(isr_left_b_pin);
+  byte enc_a = digitalRead(cfg.mot_left_enc_gpio_a_fg);
+  byte enc_b = digitalRead(cfg.mot_left_enc_gpio_b);
   motorLeft.tickSignedEncoder(enc_a != enc_b);
 }
 
 void IRAM_ATTR quadEncoderARightISR() {
-  bool enc_a = fastGpioRead(isr_right_a_pin);
-  bool enc_b = fastGpioRead(isr_right_b_pin);
+  byte enc_a = digitalRead(cfg.mot_right_enc_gpio_a_fg);
+  byte enc_b = digitalRead(cfg.mot_right_enc_gpio_b);
   motorRight.tickSignedEncoder(enc_a != enc_b);
 }
 
 void IRAM_ATTR quadEncoderBLeftISR() {
-  bool enc_a = fastGpioRead(isr_left_a_pin);
-  bool enc_b = fastGpioRead(isr_left_b_pin);
+  byte enc_a = digitalRead(cfg.mot_left_enc_gpio_a_fg);
+  byte enc_b = digitalRead(cfg.mot_left_enc_gpio_b);
   motorLeft.tickSignedEncoder(enc_a == enc_b);
 }
 
 void IRAM_ATTR quadEncoderBRightISR() {
-  bool enc_a = fastGpioRead(isr_right_a_pin);
-  bool enc_b = fastGpioRead(isr_right_b_pin);
+  byte enc_a = digitalRead(cfg.mot_right_enc_gpio_a_fg);
+  byte enc_b = digitalRead(cfg.mot_right_enc_gpio_b);
   motorRight.tickSignedEncoder(enc_a == enc_b);
 }
 
@@ -154,10 +129,6 @@ void setupEncoders(motor_encoder_t motor_encoder_type) {
 
       setPinMode(cfg.mot_left_enc_gpio_a_fg, INPUT);
       setPinMode(cfg.mot_left_enc_gpio_b, INPUT);
-      isr_left_a_pin  = cfg.mot_left_enc_gpio_a_fg;
-      isr_left_b_pin  = cfg.mot_left_enc_gpio_b;
-      isr_right_a_pin = cfg.mot_right_enc_gpio_a_fg;
-      isr_right_b_pin = cfg.mot_right_enc_gpio_b;
       attachInterrupt(cfg.mot_left_enc_gpio_a_fg, quadEncoderALeftISR, CHANGE);
       attachInterrupt(cfg.mot_left_enc_gpio_b, quadEncoderBLeftISR, CHANGE);
     
