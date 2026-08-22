@@ -667,7 +667,7 @@ inline void diagSpin() {
     char buf[128];
     int n = diag_udp.read(buf, sizeof(buf) - 1);
     if (n > 0) {
-      buf[n] = ' ';
+      buf[n] = 0;
       String cmd(buf);
       cmd.trim();
       cmd.toUpperCase();
