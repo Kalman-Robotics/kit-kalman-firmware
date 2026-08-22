@@ -19,7 +19,7 @@
 set -euo pipefail
 
 ENV_NAME="${ENV_NAME:-esp32-s3-diag-ota}"
-PI_HOST="${PI_HOST:-pi@raspberrypi.local}"
+PI_HOST="${PI_HOST:-pi5_robot}"   # alias de ~/.ssh/config
 ESP_IP="${ESP_IP:-192.168.4.48}"
 ESP_PORT="${ESP_PORT:-3232}"
 OTA_PASS="${OTA_PASS:-kalman2024}"

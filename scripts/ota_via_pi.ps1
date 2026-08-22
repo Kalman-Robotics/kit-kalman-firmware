@@ -14,7 +14,7 @@
 
 param(
     [string]$EnvName = "esp32-s3-diag-ota",
-    [string]$PiHost  = "pi@raspberrypi.local",
+    [string]$PiHost  = "pi5_robot",   # alias de ~/.ssh/config
     [string]$EspIp   = "192.168.4.48",
     [int]   $EspPort = 3232,
     [string]$OtaPass = "kalman2024",
