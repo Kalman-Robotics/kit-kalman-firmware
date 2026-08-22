@@ -39,6 +39,24 @@
 #define DIAG_NO_RESTART 0
 #endif
 
+// Puentes hacia el resto del firmware. diag.h no puede incluir motors.h ni
+// session.h sin crear un ciclo de inclusiones, asi que se definen en main.cpp.
+const char * diagSessionState();  // evita depender de session.h
+void diagStopMotors();
+void diagResetOdom();
+String diagRebootToken();
+void diagNoteCmd(const String & cmd);
+float diagOdomX();
+float diagOdomYaw();
+
+// Ultimo comando recibido: al revisar un incidente responde a una pregunta
+// concreta, si alguien mando algo justo antes
+extern char     g_last_cmd[24];
+extern int64_t  g_last_cmd_us;
+extern uint32_t g_cmd_count;
+extern bool     g_ota_active;   // carga OTA en curso
+extern uint32_t g_ota_handle_max_us;  // coste de ArduinoOTA.handle()
+
 // ---------------------------------------------------------------------------
 // Forense de reinicios. Disponible en los dos modos: un reinicio de hardware
 // (watchdog, brownout, panic) tampoco lo decide el firmware en produccion, y
@@ -109,6 +127,7 @@ enum incident_t {
   INC_WIFI_BACK = 7,
   INC_PANIC_FORCED = 8,  // volcado provocado por RX muerto
   INC_LOOP_SLOW = 9,     // el bucle supero el umbral; data = ms
+  INC_OTA_START = 10,    // comienzo de una carga OTA
 };
 
 inline const char * incidentName(uint8_t t) {
@@ -122,6 +141,7 @@ inline const char * incidentName(uint8_t t) {
     case INC_WIFI_BACK:    return "wifi_back";
     case INC_PANIC_FORCED: return "panic_forced";
     case INC_LOOP_SLOW:    return "loop_slow";
+    case INC_OTA_START:    return "ota_start";
     default:               return "?";
   }
 }
@@ -240,6 +260,11 @@ static const uint32_t RX_STALL_PANIC_S = 120;
 
 // Vigila el silencio de entrada. Se llama desde loop().
 inline void diagRxWatchdog() {
+  // Durante una carga OTA el loop se bloquea escribiendo a flash y el trafico
+  // entrante lo consume ArduinoOTA, no diagNoteRx(): sin esta guarda el
+  // watchdog veria silencio y podria provocar un panic a mitad del flasheo
+  if (g_ota_active)
+    return;
   if (WiFi.status() != WL_CONNECTED || g_last_rx_us == 0)
     return;
 
@@ -556,6 +581,18 @@ inline String diagReport() {
   // Numero de arranques desde el ultimo corte de alimentacion: si crece,
   // el robot se esta reiniciando solo
   s += "\"boots\":";           s += String(g_hist.boots); s += ",";
+  // Estado de sesion: evita tener que sondear el 8889 para saber la fase
+  s += "\"session_state\":\"";  s += diagSessionState(); s += "\",";
+  // Ultimo comando recibido: al revisar un incidente, saber si alguien mando
+  // algo justo antes
+  s += "\"last_cmd\":\"";       s += g_last_cmd; s += "\",";
+  s += "\"last_cmd_s\":";      s += String(g_last_cmd_us > 0 ?
+    (long)((esp_timer_get_time() - g_last_cmd_us) / 1000000) : -1); s += ",";
+  s += "\"cmd_count\":";       s += String(g_cmd_count); s += ",";
+  s += "\"ota\":";             s += (g_ota_active ? "true" : "false"); s += ",";
+  s += "\"ota_handle_us\":";   s += String(g_ota_handle_max_us); s += ",";
+  s += "\"odom_x\":";          s += String(diagOdomX(), 3); s += ",";
+  s += "\"odom_yaw\":";        s += String(diagOdomYaw(), 3); s += ",";
   if (g_have_coredump) {
     s += "\"panic_pc\":\"0x";     s += String(g_panic_pc, HEX); s += "\",";
     s += "\"panic_task\":\"";     s += g_panic_task; s += "\",";
@@ -592,6 +629,32 @@ inline void diagSend(IPAddress to, bool broadcast) {
 }
 
 // Heartbeat periodico y atencion de comandos (STATUS / RESET)
+// Respuesta estandar a un comando. Se responde SIEMPRE, incluso a comandos
+// desconocidos: sin eso no se puede distinguir "no llego" de "llego y no se
+// entiende" de "el chip esta colgado", que desde la Pi se ven igual.
+inline void diagReply(IPAddress to, const char * ack, const char * result) {
+  static uint32_t seq = 0;
+  String s = "{\"v\":1,\"ack\":\"";
+  s += ack;
+  s += "\",\"result\":\"";
+  s += result;
+  s += "\",\"state\":\"";
+  s += diagSessionState();
+  s += "\",\"up_s\":";
+  s += String((uint32_t)(esp_timer_get_time() / 1000000));
+  s += ",\"seq\":";
+  s += String(++seq);
+  s += "}";
+
+  WiFiUDP tx;
+  if (tx.beginPacket(to, DIAG_PORT) == 1) {
+    tx.print(s);
+    tx.endPacket();
+  }
+  tx.stop();
+  Serial.println(s);
+}
+
 inline void diagSpin() {
   static unsigned long last_hb_ms = 0;
 
@@ -600,15 +663,33 @@ inline void diagSpin() {
   int len = diag_udp.parsePacket();
   if (len > 0) {
     diagNoteRx();
-    char buf[32];
+    // 128 bytes: los comandos con argumento (REBOOT <token>) no entran en 32
+    char buf[128];
     int n = diag_udp.read(buf, sizeof(buf) - 1);
     if (n > 0) {
-      buf[n] = '\0';
+      buf[n] = ' ';
       String cmd(buf);
       cmd.trim();
       cmd.toUpperCase();
+
+      IPAddress from = diag_udp.remoteIP();
+      diagNoteCmd(cmd);
+
+      // Separar comando y argumento
+      String arg = "";
+      int sp = cmd.indexOf(' ');
+      if (sp > 0) {
+        arg = cmd.substring(sp + 1);
+        arg.trim();
+        cmd = cmd.substring(0, sp);
+      }
+
       if (cmd == "STATUS") {
-        diagSend(diag_udp.remoteIP(), false);
+        diagSend(from, false);
+
+      } else if (cmd == "PING") {
+        diagReply(from, "PING", "OK");
+
       } else if (cmd == "HISTORY") {
         // El historial va aparte: no cabe en el reporte periodico
         String h = "{\"v\":1,\"ack\":\"HISTORY\",\"boots\":";
@@ -617,27 +698,62 @@ inline void diagSpin() {
         h += histJson();
         h += "}";
         WiFiUDP tx;
-        if (tx.beginPacket(diag_udp.remoteIP(), DIAG_PORT) == 1) {
+        if (tx.beginPacket(from, DIAG_PORT) == 1) {
           tx.print(h);
           tx.endPacket();
         }
         tx.stop();
         Serial.println(h);
+
       } else if (cmd == "CLEAR_HISTORY") {
         g_hist.idx = 0;
         g_hist.boots = 0;
         memset(g_hist.e, 0, sizeof(g_hist.e));
         Serial.println("[DIAG] historial borrado");
-        diagSend(diag_udp.remoteIP(), false);
-      } else if (cmd == "RESET") {
+        diagReply(from, "CLEAR_HISTORY", "OK");
+
+      } else if (cmd == "RESET" || cmd == "RESET_COUNTERS") {
         diag = DiagStats();
         g_loop_max_ms = 0;
         g_loop_max_ms_since_report = 0;
         g_rx_stalls = 0;
         g_rx_stall_max_s = 0;
         g_rx_stall_log_n = 0;
+        g_ota_handle_max_us = 0;
         Serial.println("[DIAG] contadores reiniciados");
-        diagSend(diag_udp.remoteIP(), false);
+        diagReply(from, "RESET_COUNTERS", "OK");
+
+      } else if (cmd == "STOP_MOTORS") {
+        diagStopMotors();
+        diagReply(from, "STOP_MOTORS", "OK");
+
+      } else if (cmd == "RESET_ODOM") {
+        diagResetOdom();
+        diagReply(from, "RESET_ODOM", "OK");
+
+      } else if (cmd == "REBOOT" || cmd == "REBOOT_SAFE") {
+        // Token: ultimos 4 hex de la MAC. No es seguridad (la red esta
+        // aislada) sino proteccion contra un reinicio accidental por un bug
+        // en la Pi durante una clase.
+        if (arg != diagRebootToken()) {
+          diagReply(from, cmd.c_str(), "ERR bad_token");
+        } else {
+          bool safe = (cmd == "REBOOT_SAFE");
+          diagReply(from, cmd.c_str(), "OK");
+          if (safe) {
+            diagStopMotors();
+            delay(100);
+          }
+          Serial.println("[DIAG] reinicio remoto solicitado");
+          Serial.flush();
+          delay(200);
+          // Excepcion explicita a DIAG_NO_RESTART: un REBOOT pedido a mano
+          // debe reiniciar tambien en el build de diagnostico
+          ESP.restart();
+        }
+
+      } else {
+        diagReply(from, cmd.c_str(), "UNKNOWN");
       }
     }
   }
