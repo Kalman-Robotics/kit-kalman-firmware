@@ -98,6 +98,13 @@ inline void diagNoteRx() {
   }
 }
 
+// Si el RX lleva demasiado tiempo muerto, provocar un panic a proposito: eso
+// dispara el core dump y deja la fotografia del estado. Sin esto, el episodio
+// del 22-ago dejo el chip inerte 10 h sin panic y por tanto sin volcado.
+// Solo actua muy pasado el umbral de deteccion, para no interferir con cortes
+// que se recuperan solos.
+static const uint32_t RX_STALL_PANIC_S = 120;
+
 // Vigila el silencio de entrada. Se llama desde loop().
 inline void diagRxWatchdog() {
   if (WiFi.status() != WL_CONNECTED || g_last_rx_us == 0)
@@ -132,6 +139,13 @@ inline void diagRxWatchdog() {
     Serial.print(WiFi.status());
     Serial.print(" rssi=");
     Serial.println(WiFi.RSSI());
+  }
+
+  // Forzar el volcado cuando el corte ya no se va a recuperar
+  if (silence_s >= RX_STALL_PANIC_S) {
+    Serial.println("[DIAG] RX muerto demasiado tiempo: provocando core dump");
+    Serial.flush();
+    assert(false && "rx_stall: volcado forzado para capturar el estado");
   }
 }
 
@@ -284,7 +298,7 @@ inline void diagReadCoreDump() {
     g_have_coredump = true;
     g_panic_pc = sum->exc_pc;
     strncpy(g_panic_task, sum->exc_task, sizeof(g_panic_task) - 1);
-    g_panic_task[sizeof(g_panic_task) - 1] = ' ';
+    g_panic_task[sizeof(g_panic_task) - 1] = 0;
 
     Serial.print("[DIAG] core dump del cuelgue anterior: PC=0x");
     Serial.print(g_panic_pc, HEX);
