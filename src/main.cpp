@@ -79,39 +79,25 @@ void spinPing();
 bool spinWiFi();
 void spinSession();
 void spinSessionLed();
-// Forense de reinicios: se captura una sola vez, antes de que nada lo pise
+// Motivo del ultimo reset y salud del bucle: lo unico que quedo de la
+// instrumentacion de las fases 2-4. El resto se quito por no aportar al
+// diagnostico y degradar el bucle.
 esp_reset_reason_t g_rst_reason = ESP_RST_UNKNOWN;
 uint32_t g_loop_max_ms = 0;
 uint32_t g_loop_max_ms_since_report = 0;
 
-// Testigos de recepcion: ver el bloque de RX stall en include/diag.h
-volatile uint32_t g_rx_count = 0;
-volatile int64_t  g_last_rx_us = 0;
-uint32_t g_rx_stalls = 0;
-uint32_t g_rx_stall_max_s = 0;
-bool     g_rx_stalled = false;
-uint32_t g_rx_stall_at_s[RX_STALL_LOG_LEN] = {0};
-uint8_t  g_rx_stall_log_n = 0;
+// Contadores del enlace; ninguno dispara acciones por su cuenta
+uint32_t g_ping_fails = 0;
+uint32_t g_agent_lost = 0;
+uint32_t g_wifi_drops = 0;
+uint32_t g_cmd_vel_rx = 0;
 
-// Resumen del ultimo core dump, si lo hay
-uint32_t g_panic_pc = 0;
-char     g_panic_task[16] = {0};
-bool     g_have_coredump = false;
-
-// Sobrevive al reset: no la toca el arranque
-RTC_NOINIT_ATTR TraceBuf g_trace;
-RTC_NOINIT_ATTR HistBuf g_hist;
+WiFiUDP diag_udp;
 
 char     g_last_cmd[24] = {0};
 int64_t  g_last_cmd_us = 0;
 uint32_t g_cmd_count = 0;
 bool     g_ota_active = false;
-uint32_t g_ota_handle_max_us = 0;
-
-#if DIAG_NO_RESTART
-DiagStats diag;
-WiFiUDP diag_udp;
-#endif
 
 // Estado de la sesion de laboratorio. Ver include/session.h para el protocolo.
 SessionLink session_link;
@@ -137,11 +123,7 @@ void twist_sub_callback(const void *msgin);
 void twist_sub_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   last_cmd_vel_us = esp_timer_get_time();
-  diagNoteRx();
-#if DIAG_NO_RESTART
-  diag.cmd_vel_rx++;
-  diag.last_cmd_vel_s = last_cmd_vel_us / 1000000;
-#endif
+    g_cmd_vel_rx++;
 
   float target_speed_lin_x = constrain(msg->linear.x, -0.15f, 0.15f);
   float target_speed_ang_z = constrain(msg->angular.z, -1.0f, 1.0f);
@@ -547,9 +529,7 @@ void spinPing() {
 
   rmw_ret_t rc = rmw_uros_ping_agent(cfg.UROS_PING_TIMEOUT_MS, 1);
   if (rc != RMW_RET_OK) {
-#if DIAG_NO_RESTART
-    diag.ping_fails++;
-#endif
+    g_ping_fails++;
     Serial.print("Ping failed (");
     Serial.print(++ping_fail_count);
     Serial.print("/");
@@ -566,27 +546,15 @@ void spinPing() {
       lidar->stop();
       session_state = SESSION_GRACE;
       session_grace_start_ms = millis();
-#if DIAG_NO_RESTART
-      diag.agent_lost++;
-#endif
+      g_agent_lost++;
     }
   } else {
-    // Un ping respondido es la prueba mas fiable de que el RX sigue vivo:
-    // llega una respuesta del agente cada segundo
-    diagNoteRx();
+    // El agente volvio dentro del periodo de gracia: es el unico caso que se
+    // resuelve sin reiniciar
     if (session_state == SESSION_GRACE) {
       Serial.println("micro-ROS agent recovered, back to ACTIVE");
       session_state = SESSION_ACTIVE;
       lidar->start();
-#if DIAG_NO_RESTART
-      diag.agent_recovered++;
-      {
-        uint32_t down_s = (millis() - session_grace_start_ms) / 1000;
-        diag.total_agent_down_s += down_s;
-        if (down_s > diag.max_agent_down_s)
-          diag.max_agent_down_s = down_s;
-      }
-#endif
     }
     ping_fail_count = 0;
   }
@@ -637,9 +605,7 @@ bool spinWiFi() {
     wifi_lost_ms = 0;
   } else if (!wifi_ok && wifi_ok_prev) {
     Serial.println("WiFi connection lost: pausing motors, LiDAR");
-#if DIAG_NO_RESTART
-    diag.wifi_drops++;
-#endif
+    g_wifi_drops++;
     setMotorSpeeds(0, 0);
     lidar->stop();
     wifi_lost_ms = millis();
@@ -654,7 +620,7 @@ bool spinWiFi() {
     if (millis() - wifi_lost_ms >= cfg.WIFI_RECONNECT_TIMEOUT_MS) {
       Serial.println("WiFi not recovered, restarting...");
       Serial.flush();
-      DIAG_RESTART("wifi_not_recovered");
+      ESP.restart();
     }
 
     if (millis() - last_retry_ms >= cfg.WIFI_RECONNECT_RETRY_MS) {
@@ -684,7 +650,7 @@ void sessionToIdle(const char * reason) {
   lidar->stop();
   Serial.flush();
   delay(200);
-  DIAG_RESTART("session_to_idle");
+  ESP.restart();
 }
 
 // Procesa los avisos de la Raspberry y administra el periodo de gracia.
@@ -748,7 +714,6 @@ void setupOTA() {
     lidar->stop();
     // Sin esto el watchdog de RX podria provocar un panic a mitad de la carga
     g_ota_active = true;
-    histAdd(INC_OTA_START);
   });
 
   ArduinoOTA.onEnd([]() {
@@ -792,7 +757,7 @@ void spinSession() {
         Serial.println("Session: START recibido, reiniciando para conectar");
         Serial.flush();
         delay(200);
-        DIAG_RESTART("session_start");
+        ESP.restart();
       }
     } else if (event == "SESSION_END") {
       // Corta el periodo de gracia: no fue un corte de red, la sesion termino
@@ -802,8 +767,18 @@ void spinSession() {
     // PING y cualquier otro evento ya recibieron su ACK en poll()
   }
 
-  if (session_state == SESSION_GRACE &&
+  // Una sola vez: en modo diagnostico DIAG_RESTART no reinicia, y sin esta
+  // guarda sessionToIdle() se reintentaba en cada iteracion del loop --365
+  // veces en una prueba--, con su setMotorSpeeds + lidar->stop + delay(200)
+  // cada vez. Eso degradaba el bucle de 56 a 265 ms y convertia un corte de
+  // 16 s en un estado roto permanente.
+  static bool idle_attempted = false;
+  if (session_state != SESSION_GRACE)
+    idle_attempted = false;
+
+  if (session_state == SESSION_GRACE && !idle_attempted &&
       millis() - session_grace_start_ms >= cfg.SESSION_GRACE_MS) {
+    idle_attempted = true;
     // Se agoto la espera sin que la Raspberry avisara nada: se asume fin de
     // sesion no anunciado
     sessionToIdle("grace timeout");
@@ -838,30 +813,23 @@ void spinSessionLed() {
 }
 
 void loop() {
-  traceMark(TR_LOOP);
   bool wifi_ok = spinWiFi();
 
   // Coste de OTA en el bucle: se mide aparte para poder compararlo contra el
   // baseline sin OTA y decidir si vale la pena dejarlo siempre activo
+  // Escuchar el socket de OTA. Medido en 91 us por llamada, pero como los
+  // otros sondeos UDP no hace falta en cada iteracion: una carga reintenta la
+  // invitacion, asi que 50 ms no la impiden.
   {
-    // Igual que los otros sondeos UDP: no hace falta en cada iteracion. Una
-    // carga OTA reintenta la invitacion, asi que 50 ms no la impiden.
     static unsigned long last_ota_ms = 0;
     if (g_ota_active || millis() - last_ota_ms >= 50) {
       last_ota_ms = millis();
-      int64_t t0 = esp_timer_get_time();
       ArduinoOTA.handle();
-      uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
-      if (us > g_ota_handle_max_us)
-        g_ota_handle_max_us = us;
     }
   }
-
-  traceMark(TR_LIDAR);
   lidar->loop();
 
   // Process micro-ROS callbacks
-  traceMark(TR_EXECUTOR);
   rcl_ret_t ret = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
   if (ret != RCL_RET_OK) {
     Serial.print("rclc_executor_spin_some() error ");
@@ -871,15 +839,16 @@ void loop() {
   updateROSParams();
   int64_t time_now_us = esp_timer_get_time();
   spinIMU(time_now_us);
-  traceMark(TR_TELEM);
   spinTelem(false);
   spinControlStatus();
-  traceMark(TR_PING);
   spinPing();
   // Estos tres sondean sockets UDP; hacerlo en cada iteracion le quitaba
   // tiempo al drenado del UART del LiDAR. Ver el limitador dentro de cada uno.
   spinSession();
   spinSessionLed();
+  // diagSpin() incluye el watchdog de RX, que daba falsos positivos: su
+  // testigo se alimenta sobre todo de la respuesta del ping (1 Hz) y
+  // envejecia con la red sana. Se conserva el reporte por UDP, que es pasivo.
   diagSpin();
 
   if (!wifi_ok) {
@@ -899,8 +868,6 @@ void loop() {
   } else {
     updateSpeedRamp();
   }
-
-  traceMark(TR_MOTORS);
   motorLeft.update();
   motorRight.update();
 

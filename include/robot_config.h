@@ -63,10 +63,14 @@ public:
   static const uint32_t WIFI_CONN_TIMEOUT_MS = 30000;
   // Espera de IP por DHCP una vez asociado el AP
   static const uint32_t WIFI_DHCP_TIMEOUT_MS = 10000;
-  // Reconexion de WiFi durante la operacion: cada cuanto reintentar y cuanto
-  // esperar antes de darse por vencido y reiniciar
-  static const uint32_t WIFI_RECONNECT_RETRY_MS = 5000;
-  static const uint32_t WIFI_RECONNECT_TIMEOUT_MS = 30000;
+  // CASO 1: el ESP32 pierde el WiFi.
+  //
+  // Se reintenta la asociacion enseguida y, si en WIFI_RECONNECT_TIMEOUT_MS
+  // no volvio, se reinicia. Antes eran 5 s entre intentos y 30 s de espera;
+  // como el reinicio cuesta ~8 s, esperar 30 s solo alarga la caida cuando el
+  // stack quedo inconsistente, que es el caso en que reconectar no funciona.
+  static const uint32_t WIFI_RECONNECT_RETRY_MS = 2000;
+  static const uint32_t WIFI_RECONNECT_TIMEOUT_MS = 8000;
   // static constexpr char * SSID_AP = (char *)"robot.web"; //it'll be dynamic now
   static const uint32_t MONITOR_BAUD = 115200;
   static const uint8_t UNDEFINED_GPIO = 255;
@@ -85,7 +89,13 @@ public:
   // robot: loop_max_now 36 ms normal -> 508 ms al primer fallo -> 1995 ms con
   // el cuelgue establecido. Con 100 ms el bloqueo baja al 10 % del tiempo.
   static const int UROS_PING_TIMEOUT_MS = 100;
-  static const uint8_t UROS_PING_MAX_FAILS = 5;
+  // CASO 2: el ESP32 pierde la sesion con micro-ROS.
+  //
+  // 3 pings fallidos en vez de 5: con timeout de 100 ms y periodo de 1 s, son
+  // ~3 s para detectar la caida en lugar de ~5. El margen de 5 se puso cuando
+  // el timeout era de 500 ms y el jitter de WiFi bastaba para fallar; con
+  // 100 ms el ping es mas barato y se puede ser mas estricto.
+  static const uint8_t UROS_PING_MAX_FAILS = 3;
   // Espera al agente durante el arranque. Si no aparece se reinicia el ESP32:
   // un reinicio limpio sale del limbo y cubre el caso de que el agente arranque
   // despues que el robot.
@@ -96,9 +106,27 @@ public:
   // Clave de la actualizacion por WiFi. La red esta aislada, asi que protege
   // sobre todo contra una carga accidental desde otra maquina.
   static constexpr char * OTA_PASSWORD = (char *)"kalman2024";
-  // Cuanto reintentar tras perder el agente antes de darlo por fin de sesion.
-  // Solo aplica si la Raspberry no avisa SESSION_END, que corta la espera ya.
-  static const uint32_t SESSION_GRACE_MS = 120000;
+  // Cuanto esperar tras perder el agente antes de reiniciar.
+  //
+  // Medido en el robot: cuando se corta la sesion XRCE-DDS, micro-ROS NO la
+  // restablece aunque la red vuelva --wifi_status=3, last_rx_s=0,
+  // wifi_drops=0 y aun asi agent_recovered=0--. Es una limitacion conocida:
+  // reestablecerla exige reinicializar rclc_support, que deja memoria
+  // colgada, asi que el reinicio es la unica recuperacion segura.
+  //
+  // Esperar 2 min por algo que no va a ocurrir solo alargaba la caida. Con
+  // 10 s el ciclo completo --5 pings fallidos, gracia, reinicio-- deja al
+  // robot operativo en ~23 s. Los 5 pings previos ya cubren el caso de un
+  // corte de red breve con el agente vivo del otro lado.
+  // Medido en el robot: cuando se corta la sesion XRCE-DDS, micro-ROS NO la
+  // restablece aunque la red vuelva --wifi_status=3, last_rx_s=0,
+  // wifi_drops=0 y aun asi agent_recovered=0--. Reestablecerla exige
+  // reinicializar rclc_support, que deja memoria colgada, asi que el reinicio
+  // es la unica recuperacion segura y esperar solo alarga la caida.
+  //
+  // 2 s de gracia cubren el unico caso que puede resolverse sin reiniciar:
+  // que el agente responda otra vez enseguida. Mas alla de eso no vuelve.
+  static const uint32_t SESSION_GRACE_MS = 2000;
   // Sondeo del agente mientras se espera una sesion. Es la red de contencion
   // por si se pierde el broadcast SESSION_START.
   static const uint32_t SESSION_IDLE_POLL_MS = 30000;

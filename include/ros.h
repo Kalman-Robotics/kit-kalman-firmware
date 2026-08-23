@@ -267,7 +267,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
       Serial.println("WiFi lost while connecting to agent, restarting...");
       setBootState(BOOT_AGENT_TIMEOUT);
       delay(500);
-      DIAG_RESTART("wifi_lost_during_agent_search");
+      ESP.restart();
     }
 
     // Sin timeout el robot se queda en limbo indefinido cuando el agente no
@@ -279,9 +279,7 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
         setBootState(BOOT_AGENT_TIMEOUT);
         delay(100);
       }
-      DIAG_RESTART("agent_not_found");
-      // En modo diagnostico se sigue buscando en vez de reiniciar
-      agent_conn_start_ms = millis();
+      ESP.restart();
     }
 
     // Fijo en el primer intento, parpadeante a partir del segundo: si lo ves

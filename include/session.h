@@ -101,7 +101,6 @@ class SessionLink {
       int len = udp_.parsePacket();
       if (len <= 0)
         return false;
-      diagNoteRx();
 
       char buf[64];
       int n = udp_.read(buf, sizeof(buf) - 1);
