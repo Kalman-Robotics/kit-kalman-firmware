@@ -301,8 +301,16 @@ inline void diagRxWatchdog() {
     histAdd(INC_RX_STALL, (uint16_t)silence_s);
   }
 
-  // Forzar el volcado cuando el corte ya no se va a recuperar
-  if (silence_s >= RX_STALL_PANIC_S) {
+  // Forzar el volcado cuando el corte ya no se va a recuperar.
+  //
+  // DESACTIVADO: daba falsos positivos. El testigo de recepcion se actualiza
+  // sobre todo desde la respuesta del ping, que corre solo una vez por
+  // segundo, asi que el contador envejecia aunque la red estuviera sana
+  // --ping_fails=0 y agent_lost=0 durante los episodios-- y el robot entraba
+  // en un ciclo de panic cada ~7 min. Un reinicio periodico es mucho peor que
+  // el fallo que se pretendia diagnosticar. Reactivar solo cuando el testigo
+  // cubra todo el trafico entrante, no una muestra de 1 Hz.
+  if (false && silence_s >= RX_STALL_PANIC_S) {
     Serial.println("[DIAG] RX muerto demasiado tiempo: provocando core dump");
     histAdd(INC_PANIC_FORCED, (uint16_t)silence_s);
     Serial.flush();
