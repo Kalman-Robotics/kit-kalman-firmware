@@ -728,6 +728,16 @@ inline void diagSpin() {
         }
         Serial.println(h);
 
+      } else if (cmd == "CLEAR_COREDUMP") {
+        // Sin esto, el volcado de un cuelgue viejo se sigue reportando
+        // indefinidamente y no se distingue de uno nuevo
+        esp_core_dump_image_erase();
+        g_have_coredump = false;
+        g_panic_pc = 0;
+        g_panic_task[0] = 0;
+        Serial.println("[DIAG] core dump borrado");
+        diagReply(from, fport, "CLEAR_COREDUMP", "OK");
+
       } else if (cmd == "CLEAR_HISTORY") {
         g_hist.idx = 0;
         g_hist.boots = 0;

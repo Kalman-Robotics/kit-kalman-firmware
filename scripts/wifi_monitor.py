@@ -183,7 +183,7 @@ def send_command(cmd: str, addr: str, port: int) -> int:
     deadline = time.time() + CMD_WAIT_S
     while time.time() < deadline:
         try:
-            data, src = sock.recvfrom(512)
+            data, src = sock.recvfrom(8192)
         except socket.timeout:
             continue
         text = data.decode(errors="replace").strip()
@@ -219,7 +219,7 @@ def listen(port: int, log_path: str) -> int:
         log.flush()
         try:
             while True:
-                data, src = sock.recvfrom(512)
+                data, src = sock.recvfrom(8192)
                 text = data.decode(errors="replace").strip()
                 if not text.startswith("{"):
                     continue
