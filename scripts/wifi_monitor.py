@@ -135,6 +135,12 @@ def describe(rec: dict) -> str:
             if dma_min < 8000:
                 line += " <== DMA AGOTANDOSE"
 
+    # Core dump del cuelgue anterior: la direccion donde murio
+    pc = rec.get("panic_pc")
+    if pc:
+        line += (f"  <== CORE DUMP pc={pc}"
+                 f" tarea={rec.get('panic_task', '?')}")
+
     if rec.get("past_wrap"):
         line += "  [pasada la marca de 71.58 min]"
 

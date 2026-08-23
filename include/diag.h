@@ -19,6 +19,7 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
+#include <esp_core_dump.h>
 
 // Modo diagnostico para pruebas de larga duracion.
 //
@@ -166,6 +167,135 @@ inline void diagLoopTick() {
   loop_start_us = esp_timer_get_time();
 }
 
+// ---------------------------------------------------------------------------
+// Resumen del ultimo core dump.
+//
+// El framework de Arduino ya trae CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y con
+// formato ELF, asi que los cuelgues anteriores YA escribieron su volcado en la
+// particion coredump. Publicarlo por UDP evita tener que conectar el USB para
+// saber donde murio.
+//
+// panic_pc se traduce a linea de codigo con:
+//   xtensa-esp32s3-elf-addr2line -pfiaC -e .pio/build/<env>/firmware.elf 0x<PC>
+// ---------------------------------------------------------------------------
+
+extern uint32_t g_panic_pc;
+extern char     g_panic_task[16];
+extern bool     g_have_coredump;
+
+// ---------------------------------------------------------------------------
+// Traza circular en RTC RAM.
+//
+// El reporte cada 30 s es demasiado grueso: el cuelgue ocurre entre dos
+// muestras y no se ve la transicion. Esta traza guarda los ultimos 128 eventos
+// del loop en memoria RTC no inicializada, que SOBREVIVE a un reset (panic,
+// watchdog o brownout), y se vuelca al arrancar. Dice en que punto del loop se
+// quedo, incluso si el core dump fallara.
+// ---------------------------------------------------------------------------
+
+enum trace_ev_t {
+  TR_LOOP = 1,
+  TR_LIDAR = 2,
+  TR_EXECUTOR = 3,
+  TR_PING = 4,
+  TR_TELEM = 5,
+  TR_CMD_VEL = 6,
+  TR_MOTORS = 7,
+  TR_SESSION = 8,
+};
+
+inline const char * traceEvName(uint8_t e) {
+  switch (e) {
+    case TR_LOOP:     return "loop";
+    case TR_LIDAR:    return "lidar";
+    case TR_EXECUTOR: return "executor";
+    case TR_PING:     return "ping";
+    case TR_TELEM:    return "telem";
+    case TR_CMD_VEL:  return "cmd_vel";
+    case TR_MOTORS:   return "motors";
+    case TR_SESSION:  return "session";
+    default:          return "?";
+  }
+}
+
+#define TRACE_LEN   128
+#define TRACE_MAGIC 0x54524331  // "TRC1"
+
+struct TraceBuf {
+  uint32_t magic;
+  uint16_t idx;
+  struct {
+    uint32_t t_ms;
+    uint8_t  ev;
+    uint16_t data;
+  } e[TRACE_LEN];
+};
+
+extern RTC_NOINIT_ATTR TraceBuf g_trace;
+
+// Muy barata a proposito: la llama el loop miles de veces por segundo.
+// Sin IRAM_ATTR: solo la usa el loop, nunca un ISR, y marcarla como inline en
+// IRAM provoca errores de relocacion al enlazar.
+inline void traceMark(uint8_t ev, uint16_t data = 0) {
+  uint16_t i = g_trace.idx;
+  g_trace.e[i].t_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  g_trace.e[i].ev = ev;
+  g_trace.e[i].data = data;
+  g_trace.idx = (i + 1) % TRACE_LEN;
+}
+
+// Vuelca por serie la traza del arranque anterior, si es valida
+inline void diagDumpTrace() {
+  if (g_trace.magic != TRACE_MAGIC) {
+    // Primer arranque o RAM perdida: inicializar
+    g_trace.magic = TRACE_MAGIC;
+    g_trace.idx = 0;
+    memset(g_trace.e, 0, sizeof(g_trace.e));
+    return;
+  }
+
+  Serial.println("[DIAG] traza del arranque anterior (mas reciente al final):");
+  uint16_t start = g_trace.idx;
+  for (uint16_t k = 0; k < TRACE_LEN; k++) {
+    uint16_t i = (start + k) % TRACE_LEN;
+    if (g_trace.e[i].t_ms == 0)
+      continue;
+    Serial.print("  t=");
+    Serial.print(g_trace.e[i].t_ms);
+    Serial.print("ms ");
+    Serial.print(traceEvName(g_trace.e[i].ev));
+    if (g_trace.e[i].data) {
+      Serial.print(" d=");
+      Serial.print(g_trace.e[i].data);
+    }
+    Serial.println();
+  }
+  g_trace.idx = 0;
+  memset(g_trace.e, 0, sizeof(g_trace.e));
+}
+
+inline void diagReadCoreDump() {
+  esp_core_dump_summary_t * sum =
+    (esp_core_dump_summary_t *) malloc(sizeof(esp_core_dump_summary_t));
+  if (sum == NULL)
+    return;
+
+  if (esp_core_dump_get_summary(sum) == ESP_OK) {
+    g_have_coredump = true;
+    g_panic_pc = sum->exc_pc;
+    strncpy(g_panic_task, sum->exc_task, sizeof(g_panic_task) - 1);
+    g_panic_task[sizeof(g_panic_task) - 1] = ' ';
+
+    Serial.print("[DIAG] core dump del cuelgue anterior: PC=0x");
+    Serial.print(g_panic_pc, HEX);
+    Serial.print(" tarea=");
+    Serial.println(g_panic_task);
+    Serial.println("[DIAG] traducir con: xtensa-esp32s3-elf-addr2line -pfiaC "
+                   "-e .pio/build/<env>/firmware.elf 0x<PC>");
+  }
+  free(sum);
+}
+
 inline void diagLogResetReason() {
   Serial.print("[DIAG] motivo del ultimo reset: ");
   Serial.print(resetReasonName(g_rst_reason));
@@ -173,6 +303,8 @@ inline void diagLogResetReason() {
   Serial.print((int)g_rst_reason);
   Serial.print("), heap libre ");
   Serial.println(ESP.getFreeHeap());
+  diagReadCoreDump();
+  diagDumpTrace();
 }
 
 #if DIAG_NO_RESTART
@@ -269,6 +401,10 @@ inline String diagReport() {
   // Si WiFi.status() sigue en WL_CONNECTED (3) durante el fallo, el problema
   // esta por debajo de la capa Arduino
   s += "\"wifi_status\":";     s += String((int)WiFi.status()); s += ",";
+  if (g_have_coredump) {
+    s += "\"panic_pc\":\"0x";     s += String(g_panic_pc, HEX); s += "\",";
+    s += "\"panic_task\":\"";     s += g_panic_task; s += "\",";
+  }
   {
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {

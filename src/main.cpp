@@ -92,6 +92,14 @@ bool     g_rx_stalled = false;
 uint32_t g_rx_stall_at_s[RX_STALL_LOG_LEN] = {0};
 uint8_t  g_rx_stall_log_n = 0;
 
+// Resumen del ultimo core dump, si lo hay
+uint32_t g_panic_pc = 0;
+char     g_panic_task[16] = {0};
+bool     g_have_coredump = false;
+
+// Sobrevive al reset: no la toca el arranque
+RTC_NOINIT_ATTR TraceBuf g_trace;
+
 #if DIAG_NO_RESTART
 DiagStats diag;
 WiFiUDP diag_udp;
@@ -730,11 +738,14 @@ void spinSessionLed() {
 }
 
 void loop() {
+  traceMark(TR_LOOP);
   bool wifi_ok = spinWiFi();
 
+  traceMark(TR_LIDAR);
   lidar->loop();
 
   // Process micro-ROS callbacks
+  traceMark(TR_EXECUTOR);
   rcl_ret_t ret = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
   if (ret != RCL_RET_OK) {
     Serial.print("rclc_executor_spin_some() error ");
@@ -744,8 +755,10 @@ void loop() {
   updateROSParams();
   int64_t time_now_us = esp_timer_get_time();
   spinIMU(time_now_us);
+  traceMark(TR_TELEM);
   spinTelem(false);
   spinControlStatus();
+  traceMark(TR_PING);
   spinPing();
   spinSession();
   spinSessionLed();
@@ -769,6 +782,7 @@ void loop() {
     updateSpeedRamp();
   }
 
+  traceMark(TR_MOTORS);
   motorLeft.update();
   motorRight.update();
 
