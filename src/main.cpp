@@ -94,6 +94,8 @@ uint32_t g_cmd_vel_rx = 0;
 
 WiFiUDP diag_udp;
 
+RTC_NOINIT_ATTR SessionWant g_session_want;
+
 char     g_last_cmd[24] = {0};
 int64_t  g_last_cmd_us = 0;
 uint32_t g_cmd_count = 0;
@@ -101,7 +103,7 @@ bool     g_ota_active = false;
 
 // Estado de la sesion de laboratorio. Ver include/session.h para el protocolo.
 SessionLink session_link;
-session_state_t session_state = SESSION_ACTIVE;
+session_state_t session_state = SESSION_IDLE;  // hasta que setup() decida
 unsigned long session_grace_start_ms = 0;
 void sessionToIdle(const char * reason);
 void spinIMU(int64_t time_now_us);
@@ -588,6 +590,12 @@ void updateROSParams() {
 // quedaba librado a la reconexion automatica del stack del ESP32; si esa falla
 // el robot se queda con motores y LiDAR parados de forma indefinida.
 // No bloquea: cada llamada hace un solo paso y vuelve al loop().
+// Vigila el WiFi y lo reconecta. Corre en TODOS los estados, tambien en IDLE:
+// sin red el robot no puede recibir el SESSION_START que lo saca de ahi, asi
+// que la conexion es la unica cosa que debe estar garantizada siempre.
+// Reintenta cada 2 s y, si a los 8 s no volvio, reinicia: cuando el stack de
+// WiFi queda inconsistente reconectar no funciona y esperar solo alarga la
+// caida.
 bool spinWiFi() {
   static bool wifi_ok_prev = true;
   static unsigned long wifi_lost_ms = 0;
@@ -643,13 +651,19 @@ static unsigned long session_idle_poll_ms = 0;
 // sesion es reiniciar. Se hace aca, cuando ya no hay alumno esperando, y no
 // durante GRACE, donde el reinicio costaria segundos de reconexion.
 void sessionToIdle(const char * reason) {
+  // Al volver a IDLE el proximo arranque NO debe buscar al agente: se espera
+  // un SESSION_START nuevo
+  sessionSetWantConnect(false);
   Serial.print("Session -> IDLE (");
   Serial.print(reason);
   Serial.println("), restarting to await next session");
   setMotorSpeeds(0, 0);
   lidar->stop();
+  // Avisar antes de reiniciar: si no, la Raspberry solo ve que el robot dejo
+  // de responder y no sabe si fue un fallo o el fin normal de la sesion
+  session_link.announce("SESSION_ENDED", SESSION_IDLE);
   Serial.flush();
-  delay(200);
+  delay(400);
   ESP.restart();
 }
 
@@ -755,8 +769,11 @@ void spinSession() {
         Serial.println("Session: START recibido durante GRACE");
       } else if (session_state == SESSION_IDLE) {
         Serial.println("Session: START recibido, reiniciando para conectar");
+        sessionSetWantConnect(true);  // sobrevive al reinicio
         Serial.flush();
-        delay(200);
+        // El ACK ya salio (repetido) en poll(); este margen asegura que la
+        // radio lo transmita antes de que el chip se reinicie
+        delay(400);
         ESP.restart();
       }
     } else if (event == "SESSION_END") {
@@ -829,19 +846,22 @@ void loop() {
   }
   lidar->loop();
 
-  // Process micro-ROS callbacks
-  rcl_ret_t ret = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
-  if (ret != RCL_RET_OK) {
-    Serial.print("rclc_executor_spin_some() error ");
-    Serial.println(ret);
-  }
+  // En IDLE no hay agente ni entidades micro-ROS creadas: llamar al executor
+  // o al ping ahi solo gastaria tiempo y falsearia los contadores.
+  if (session_state != SESSION_IDLE) {
+    rcl_ret_t ret = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
+    if (ret != RCL_RET_OK) {
+      Serial.print("rclc_executor_spin_some() error ");
+      Serial.println(ret);
+    }
 
-  updateROSParams();
-  int64_t time_now_us = esp_timer_get_time();
-  spinIMU(time_now_us);
-  spinTelem(false);
-  spinControlStatus();
-  spinPing();
+    updateROSParams();
+    int64_t time_now_us = esp_timer_get_time();
+    spinIMU(time_now_us);
+    spinTelem(false);
+    spinControlStatus();
+    spinPing();
+  }
   // Estos tres sondean sockets UDP; hacerlo en cada iteracion le quitaba
   // tiempo al drenado del UART del LiDAR. Ver el limitador dentro de cada uno.
   spinSession();
@@ -1138,24 +1158,38 @@ void setup() {
     delay(500);
   }
 
-  // Ambar: buscando agente micro-ROS. Fijo en el primer intento, parpadeante
-  // en los siguientes; setupMicroROS() se encarga del timeout y del reinicio.
-  setBootState(BOOT_AGENT_SEARCHING);
-
-  // Canal de sesion con la Raspberry: se abre antes de buscar el agente para
-  // poder recibir avisos incluso mientras se espera
+  // Canal de sesion con la Raspberry y OTA: siempre activos, tambien en IDLE.
+  // Son la unica via para que el robot se entere de que empieza una sesion.
   session_link.begin(cfg.SESSION_UDP_PORT);
   diagBegin();
   setupOTA();
 
-  set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
-  delay(100); // asentar el socket UDP; si no basta, setupMicroROS() reintenta
+  // El agente micro-ROS solo existe mientras hay sesion, y esta puede empezar
+  // horas despues del arranque. Sin este condicional el ESP32 buscaba al
+  // agente de entrada y se reiniciaba cada 60 s hasta que apareciera.
+  if (sessionWantsConnect()) {
+    // Se consume la intencion: si este arranque falla, el siguiente vuelve a
+    // IDLE en vez de quedar en un ciclo de reinicios
+    sessionSetWantConnect(false);
 
-  setupMicroROS(&twist_sub_callback);
+    setBootState(BOOT_AGENT_SEARCHING);
+    set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
+    delay(100); // asentar el socket UDP; si no basta, setupMicroROS() reintenta
 
-  // Verde fijo: agente conectado
-  setBootState(BOOT_READY);
-  delay(200);
+    setupMicroROS(&twist_sub_callback);
+    session_state = SESSION_ACTIVE;
+
+    // Verde fijo: agente conectado
+    setBootState(BOOT_READY);
+    delay(200);
+
+    // Cierra el lazo con la Raspberry: el ACK de SESSION_START solo confirmo
+    // la recepcion, este anuncio confirma que la sesion quedo operativa
+    session_link.announce("SESSION_READY", SESSION_ACTIVE);
+  } else {
+    session_state = SESSION_IDLE;
+    Serial.println("Sin sesion: esperando SESSION_START de la Raspberry");
+  }
 
   // Apagar RGB — liberar GPIO 48 para el IMU
   rgb_led.turnOff();
@@ -1188,7 +1222,12 @@ void setup() {
   resetTelemMsg();
   resetNexusMsg();
 
-  startLIDAR();
+  // El LiDAR solo gira durante una sesion: esta encendido 24/7 y su motor se
+  // desgasta. Arranca en ~2 s cuando llega SESSION_START.
+  if (session_state == SESSION_ACTIVE)
+    startLIDAR();
+  else
+    Serial.println("LiDAR en espera (sin sesion activa)");
     //blink_error_code(cfg.ERR_LIDAR_START);
     //error_loop(cfg.ERR_LIDAR_START);
 }

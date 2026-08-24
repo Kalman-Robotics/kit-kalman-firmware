@@ -53,6 +53,41 @@ enum session_state_t {
   SESSION_GRACE,      // agente perdido: reintentando por si fue un corte
 };
 
+// El robot esta encendido de forma permanente, pero el agente micro-ROS solo
+// existe mientras hay una sesion de laboratorio: aparece en el ultimo paso del
+// flujo, potencialmente horas despues del arranque. Por eso el ESP32 arranca
+// en IDLE --sin micro-ROS, con el LiDAR apagado-- y espera el aviso.
+//
+// SESSION_START reinicia el ESP32 en vez de inicializar micro-ROS en caliente:
+// la libreria no libera limpiamente sus recursos, asi que reinicializarla deja
+// memoria colgada. Un arranque limpio por sesion es mas barato que una fuga
+// que se acumula.
+//
+// La intencion viaja en RTC RAM para sobrevivir a ese reinicio.
+#define SESSION_WANT_MAGIC 0x53455331  // "SES1"
+
+struct SessionWant {
+  uint32_t magic;
+  bool     connect;   // true = arrancar conectando al agente
+};
+
+extern RTC_NOINIT_ATTR SessionWant g_session_want;
+
+// Si la RTC RAM se perdio (corte de alimentacion) se asume IDLE
+inline bool sessionWantsConnect() {
+  if (g_session_want.magic != SESSION_WANT_MAGIC) {
+    g_session_want.magic = SESSION_WANT_MAGIC;
+    g_session_want.connect = false;
+    return false;
+  }
+  return g_session_want.connect;
+}
+
+inline void sessionSetWantConnect(bool connect) {
+  g_session_want.magic = SESSION_WANT_MAGIC;
+  g_session_want.connect = connect;
+}
+
 inline const char * sessionStateName(session_state_t s) {
   switch (s) {
     case SESSION_IDLE:   return "IDLE";
@@ -127,6 +162,40 @@ class SessionLink {
 
     unsigned long lastRxMs() const { return last_rx_ms_; }
 
+    // Anuncio espontaneo, sin comando previo. El ACK de SESSION_START solo
+    // confirma que el mensaje llego; entre eso y la sesion operativa hay un
+    // reinicio y ~10 s que pueden fallar. Este anuncio cierra el lazo: si no
+    // llega, la Raspberry sabe que el robot no logro conectar.
+    //
+    // Se emite por broadcast porque tras el reinicio se pierde la direccion
+    // de quien pidio la sesion, y se repite porque UDP no garantiza entrega.
+    void announce(const char * event, session_state_t state, uint8_t repeat = 3) {
+      if (WiFi.status() != WL_CONNECTED)
+        return;
+
+      String msg = "ANNOUNCE ";
+      msg += event;
+      msg += " ";
+      msg += WiFi.localIP().toString();
+      msg += " ";
+      msg += sessionStateName(state);
+      msg += " ";
+      msg += String(millis() / 1000);
+
+      IPAddress dest = WiFi.broadcastIP();
+      for (uint8_t i = 0; i < repeat; i++) {
+        if (udp_.beginPacket(dest, port_) == 1) {
+          udp_.print(msg);
+          udp_.endPacket();
+        }
+        if (i + 1 < repeat)
+          delay(80);
+      }
+      Serial.print("SessionLink tx '");
+      Serial.print(msg);
+      Serial.println("'");
+    }
+
   private:
     void sendAck(IPAddress to, const String & event, session_state_t state) {
       String ack = "ACK ";
@@ -138,13 +207,16 @@ class SessionLink {
       ack += " ";
       ack += String(millis() / 1000);
 
-      if (udp_.beginPacket(to, port_) != 1) {
-        Serial.println("SessionLink: beginPacket() failed");
-        return;
+      // Repetido: SESSION_START provoca un reinicio inmediato despues, y un
+      // ACK perdido dejaria a la Raspberry sin saber si el comando llego
+      for (uint8_t i = 0; i < 2; i++) {
+        if (udp_.beginPacket(to, port_) == 1) {
+          udp_.print(ack);
+          udp_.endPacket();
+        }
+        if (i == 0)
+          delay(30);
       }
-      udp_.print(ack);
-      if (udp_.endPacket() != 1)
-        Serial.println("SessionLink: endPacket() failed");
     }
 
     WiFiUDP udp_;
