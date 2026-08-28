@@ -20,6 +20,7 @@
 #include <micro_ros_kaia.h>
 #include <kalman_interfaces/msg/nexus_telemetry.h>
 #include <HardwareSerial.h>
+#include "debug_log.h"
 
 extern CONFIG cfg;
 extern kalman_interfaces__msg__NexusTelemetry nexus_msg;
@@ -57,12 +58,12 @@ int lidar_serial_read_callback() {
     return c;
 
   if (c < 16)
-    Serial.print('0');
-  Serial.print(c, HEX);
+    DEBUG_PRINT('0');
+  DEBUG_PRINT(c, HEX);
   if (i++ % 16 == 0)
-    Serial.println();
+    DEBUG_PRINTLN();
   else
-    Serial.print(' ');
+    DEBUG_PRINT(' ');
   return c;
 */
   return LdSerial.read();
@@ -185,15 +186,15 @@ void lidar_packet_callback(uint8_t * packet, uint16_t packet_length, bool scan_c
 
 void lidar_motor_pin_callback(float value, LDS::lds_pin_t lds_pin) {
 /*
-  Serial.print("LiDAR pin ");
-  Serial.print(lidar->pinIDToString(lds_pin));
-  Serial.print(" set ");
+  DEBUG_PRINT("LiDAR pin ");
+  DEBUG_PRINT(lidar->pinIDToString(lds_pin));
+  DEBUG_PRINT(" set ");
   if (lds_pin > 0)
-    Serial.print(value); // PWM value
+    DEBUG_PRINT(value); // PWM value
   else
-    Serial.print(lidar->pinStateToString((LDS::lds_pin_state_t)value));
-  Serial.print(", RPM ");
-  Serial.println(lidar->getCurrentScanFreqHz());
+    DEBUG_PRINT(lidar->pinStateToString((LDS::lds_pin_state_t)value));
+  DEBUG_PRINT(", RPM ");
+  DEBUG_PRINTLN(lidar->getCurrentScanFreqHz());
 */
   int pin = (lds_pin == LDS::LDS_MOTOR_EN_PIN) ?
     cfg.lidar_gpio_en : cfg.lidar_gpio_pwm;
@@ -210,7 +211,7 @@ void lidar_motor_pin_callback(float value, LDS::lds_pin_t lds_pin) {
       #else      
       if (!ledcAttachChannel(pin, cfg.LIDAR_PWM_FREQ,
         cfg.LIDAR_PWM_BITS, cfg.LIDAR_PWM_CHANNEL))
-        Serial.println("lidar_motor_pin_callback() ledcAttachChannel() error");
+        DEBUG_PRINTLN("lidar_motor_pin_callback() ledcAttachChannel() error");
       #endif
     } else
       setPinMode(pin, (value == (float)LDS::DIR_INPUT) ? INPUT : OUTPUT);
@@ -230,10 +231,10 @@ void lidar_motor_pin_callback(float value, LDS::lds_pin_t lds_pin) {
 }
 
 void lidar_info_callback(LDS::info_t code, const String info) {
-  Serial.print("LiDAR info ");
-  Serial.print(lidar->infoCodeToString(code));
-  Serial.print(": ");
-  Serial.println(info);
+  DEBUG_PRINT("LiDAR info ");
+  DEBUG_PRINT(lidar->infoCodeToString(code));
+  DEBUG_PRINT(": ");
+  DEBUG_PRINTLN(info);
 }
 
 void lidar_error_callback(LDS::result_t code, const String aux_info) {
@@ -256,15 +257,15 @@ void setupLIDAR() {
     #if ESP_IDF_VERSION_MAJOR >= 5
     if (!ledcAttachChannel(cfg.lidar_gpio_pwm, cfg.LIDAR_PWM_FREQ,
       cfg.LIDAR_PWM_BITS, cfg.LIDAR_PWM_CHANNEL))
-      Serial.println("setupLIDAR() ledcAttachChannel() error");
+      DEBUG_PRINTLN("setupLIDAR() ledcAttachChannel() error");
     #else
     if (!ledcSetup(cfg.LIDAR_PWM_CHANNEL, cfg.LIDAR_PWM_FREQ, cfg.LIDAR_PWM_BITS))
-      Serial.println("setupLIDAR() ledcSetup() error");
+      DEBUG_PRINTLN("setupLIDAR() ledcSetup() error");
     #endif
   }
 
-  Serial.print("LIDAR model ");
-  Serial.print(cfg.lidar_model);
+  DEBUG_PRINT("LIDAR model ");
+  DEBUG_PRINT(cfg.lidar_model);
 
   if (cfg.lidar_model == "NEATO XV11") {
     lidar = new LDS_NEATO_XV11();
@@ -296,10 +297,10 @@ void setupLIDAR() {
     lidar = new LDS_YDLIDAR_X4_PRO();
   } else {
     if (cfg.lidar_model != "YDLIDAR X4")
-      Serial.print(" not recognized, defaulting to YDLIDAR X4");
+      DEBUG_PRINT(" not recognized, defaulting to YDLIDAR X4");
     lidar = new LDS_YDLIDAR_X4();
   }
-  Serial.println();
+  DEBUG_PRINTLN();
 
   lidar->setScanPointCallback(lidar_scan_point_callback);
   lidar->setPacketCallback(lidar_packet_callback);
@@ -309,12 +310,12 @@ void setupLIDAR() {
   lidar->setInfoCallback(lidar_info_callback);
   lidar->setErrorCallback(lidar_error_callback);
 
-  Serial.print("LIDAR RX buffer size "); // default 128 hw + 256 sw
+  DEBUG_PRINT("LIDAR RX buffer size "); // default 128 hw + 256 sw
   Serial.flush();
-  Serial.print(LdSerial.setRxBufferSize(cfg.LIDAR_SERIAL_RX_BUF_LEN)); // before .begin()
+  DEBUG_PRINT(LdSerial.setRxBufferSize(cfg.LIDAR_SERIAL_RX_BUF_LEN)); // before .begin()
   uint32_t baud_rate = lidar->getSerialBaudRate();
-  Serial.print(", baud rate ");
-  Serial.println(baud_rate);
+  DEBUG_PRINT(", baud rate ");
+  DEBUG_PRINTLN(baud_rate);
 
   LdSerial.begin(baud_rate, SERIAL_8N1, cfg.lidar_gpio_tx, cfg.lidar_gpio_rx);
   gpio_set_drive_capability((gpio_num_t) cfg.lidar_gpio_rx, GPIO_DRIVE_CAP_0);
@@ -325,11 +326,11 @@ void setupLIDAR() {
 
 LDS::result_t startLIDAR() {  
   LDS::result_t result = lidar->start();
-  Serial.print("startLIDAR() result: ");
-  Serial.println(lidar->resultCodeToString(result));
+  DEBUG_PRINT("startLIDAR() result: ");
+  DEBUG_PRINTLN(lidar->resultCodeToString(result));
 
   if (result < 0)
-    Serial.println("Is the LiDAR connected to ESP32 and powered up?");
+    DEBUG_PRINTLN("Is the LiDAR connected to ESP32 and powered up?");
 
   lidar->setScanTargetFreqHz(cfg.lidar_scan_freq_target);
   return result;

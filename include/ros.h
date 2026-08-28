@@ -30,13 +30,16 @@
 #include <rmw_microros/rmw_microros.h>
 #include "robot_config.h"
 #include "boot_status.h"
-#include "diag.h"
+// Definido en main.cpp; lo consulta logMsg()
+extern session_state_t session_state;
 #include "lds_all_models.h"
 #include "motors.h"
 #include "esp_mac.h"
 #include <kalman_interfaces/msg/imu_data.h>
 #include <buzzer.h>
 #include <std_msgs/msg/bool.h>
+#include <std_msgs/msg/string.h>
+#include "debug_log.h"
 // #include <kalman_interfaces/msg/led.h>
 // #include <led_rgb.h>
 
@@ -53,6 +56,12 @@ rcl_publisher_t nexus_telem_pub;
 rcl_publisher_t control_status_pub;
 rcl_publisher_t log_pub;
 rcl_publisher_t imu_pub;
+// Salud del enlace serial con el agente. Publicado a 1 Hz junto al ping: es la
+// unica via para observar la estabilidad de la conexion ahora que los logs por
+// Serial estan silenciados (Serial lo ocupa el transporte micro-ROS).
+rcl_publisher_t link_health_pub;
+std_msgs__msg__String link_health_msg;
+static char link_health_buf[256];
 //rcl_publisher_t diag_pub;
 // ----- SUBSCRIBERS -----
 rcl_subscription_t twist_sub;
@@ -77,7 +86,7 @@ bool on_ros_param_changed(const Parameter * old_param, const Parameter * new_par
   (void) context;
 
   if (old_param == NULL || new_param == NULL) {
-    Serial.println("old_param == NULL || new_param == NULL");
+    DEBUG_PRINTLN("old_param == NULL || new_param == NULL");
     return false;
   }
 
@@ -86,36 +95,36 @@ bool on_ros_param_changed(const Parameter * old_param, const Parameter * new_par
       if (old_param->value.bool_value == new_param->value.bool_value)
         break;
       if (!suppress_param_log_print) {
-        Serial.print("Parameter ");
-        Serial.print(old_param->name.data);
-        Serial.print(" modified ");
-        Serial.print(old_param->value.bool_value);
-        Serial.print(" to ");
-        Serial.println(new_param->value.bool_value);
+        DEBUG_PRINT("Parameter ");
+        DEBUG_PRINT(old_param->name.data);
+        DEBUG_PRINT(" modified ");
+        DEBUG_PRINT(old_param->value.bool_value);
+        DEBUG_PRINT(" to ");
+        DEBUG_PRINTLN(new_param->value.bool_value);
       }
       break;
     case RCLC_PARAMETER_INT:
       if (old_param->value.integer_value == new_param->value.integer_value)
         break;
       if (!suppress_param_log_print) {
-        Serial.print("Parameter ");
-        Serial.print(old_param->name.data);
-        Serial.print(" modified ");
-        Serial.print(old_param->value.integer_value);
-        Serial.print(" to ");
-        Serial.println(new_param->value.integer_value);
+        DEBUG_PRINT("Parameter ");
+        DEBUG_PRINT(old_param->name.data);
+        DEBUG_PRINT(" modified ");
+        DEBUG_PRINT(old_param->value.integer_value);
+        DEBUG_PRINT(" to ");
+        DEBUG_PRINTLN(new_param->value.integer_value);
       }
       break;
     case RCLC_PARAMETER_DOUBLE:
       if (old_param->value.double_value == new_param->value.double_value)
         break;
       if (!suppress_param_log_print) {
-        Serial.print("Parameter ");
-        Serial.print(old_param->name.data);
-        Serial.print(" modified ");
-        Serial.print(old_param->value.double_value);
-        Serial.print(" to ");
-        Serial.println(new_param->value.double_value, 10);
+        DEBUG_PRINT("Parameter ");
+        DEBUG_PRINT(old_param->name.data);
+        DEBUG_PRINT(" modified ");
+        DEBUG_PRINT(old_param->value.double_value);
+        DEBUG_PRINT(" to ");
+        DEBUG_PRINTLN(new_param->value.double_value, 10);
       }
       if (strcmp(old_param->name.data, cfg.UROS_PARAM_LIDAR_SCAN_FREQ_TARGET) == 0) {
         lidar->setScanTargetFreqHz(float(new_param->value.double_value));
@@ -163,12 +172,12 @@ bool on_ros_param_changed(const Parameter * old_param, const Parameter * new_par
 rcl_ret_t syncRosTime() {
   const int timeout_ms = cfg.UROS_TIME_SYNC_TIMEOUT_MS;
 
-  Serial.print("Syncing time ... ");
+  DEBUG_PRINT("Syncing time ... ");
   rcl_ret_t rc = rmw_uros_sync_session(timeout_ms);
   if (rc != RCL_RET_OK) {
-    Serial.print("rmw_uros_sync_session(");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rmw_uros_sync_session(");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
   }
 
   // https://micro.ros.org/docs/api/rmw/
@@ -185,9 +194,9 @@ rcl_ret_t syncRosTime() {
     // https://github.com/espressif/arduino-esp32/blob/master/cores/esp32/esp32-hal-time.c
     timeval epoch = {time_seconds, time_micro_seconds};
     if (settimeofday((const timeval*)&epoch, NULL) != 0)
-      Serial.println("settimeofday() error");
+      DEBUG_PRINTLN("settimeofday() error");
     else
-      Serial.println("OK");
+      DEBUG_PRINTLN("OK");
   }
 
   return RCL_RET_OK;
@@ -215,9 +224,9 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
   rc = rcl_init_options_init(&init_options, allocator);
   if (rc != RCL_RET_OK) {
-    Serial.print("rcl_init_options_init(");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rcl_init_options_init(");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
   rcl_init_options_set_domain_id(&init_options, cfg.ros_domain_id);
@@ -232,49 +241,42 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   // Auto discover micro-ROS agent
   // RMW_UXRCE_TRANSPORT=custom
   // RMW_UXRCE_TRANSPORT_UDP
-  //Serial.print("micro-ROS agent ");
+  //DEBUG_PRINT("micro-ROS agent ");
   //if (rmw_uros_discover_agent(rmw_options) == RCL_RET_OK) {
-  //  Serial.println("not ");
+  //  DEBUG_PRINTLN("not ");
   //}
-  //Serial.print("found");
+  //DEBUG_PRINT("found");
 
   uint8_t mac[6];
   //esp_read_mac(mac, ESP_MAC_WIFI_STA);
   if (esp_efuse_mac_get_default(mac) != ESP_OK)
-    Serial.print("Error reading efuse MAC");
+    DEBUG_PRINT("Error reading efuse MAC");
 
   uint32_t client_key = mac[1]<<(3*8) | mac[2]<<(2*8) | mac[3]<<(1*8) | mac[4];
   client_key = client_key<<(8-2) | mac[5]>>2;  // TODO multiple bots
   rc = rcl_init_options_set_domain_id(&init_options, cfg.ros_domain_id);
   if (rc != RCL_RET_OK) {
-    Serial.print(F("rcl_init_options_set_domain_id() error "));
-    Serial.println(rc);
+    DEBUG_PRINT(F("rcl_init_options_set_domain_id() error "));
+    DEBUG_PRINTLN(rc);
   }
 
   rc = rmw_uros_options_set_client_key(client_key, rmw_options);
   if (rc != RCL_RET_OK) {
-    Serial.print(F("rmw_uros_options_set_client_key("));
-    Serial.print(client_key);
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT(F("rmw_uros_options_set_client_key("));
+    DEBUG_PRINT(client_key);
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
   }
 
   unsigned long agent_conn_start_ms = millis();
   uint32_t agent_attempt = 0;
 
   while(true) {
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("WiFi lost while connecting to agent, restarting...");
-      setBootState(BOOT_AGENT_TIMEOUT);
-      delay(500);
-      ESP.restart();
-    }
-
     // Sin timeout el robot se queda en limbo indefinido cuando el agente no
     // esta corriendo. Reiniciar es preferible: el siguiente ciclo lo encuentra
     // si el agente levanto mientras tanto.
     if (millis() - agent_conn_start_ms >= cfg.UROS_AGENT_CONN_TIMEOUT_MS) {
-      Serial.println("Micro-ROS agent not found, restarting...");
+      DEBUG_PRINTLN("Micro-ROS agent not found, restarting...");
       for (uint8_t i = 0; i < 10; i++) {
         setBootState(BOOT_AGENT_TIMEOUT);
         delay(100);
@@ -283,24 +285,22 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
     }
 
     // Fijo en el primer intento, parpadeante a partir del segundo: si lo ves
-    // parpadear, el WiFi esta bien y el que no responde es el agente
+    // parpadear, el enlace serial esta abierto y el que no responde es el agente
     setBootState(agent_attempt == 0 ? BOOT_AGENT_SEARCHING : BOOT_AGENT_RETRY);
     digitalWrite(cfg.led_sys_gpio, !digitalRead(cfg.led_sys_gpio));
 
-    Serial.print(F("Connecting to Micro-ROS agent "));
-    Serial.print(cfg.dest_ip);
-    Serial.print(" ... ");
+    DEBUG_PRINT(F("Connecting to Micro-ROS agent (serial) ... "));
 
     rc = rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
     if (rc != RCL_RET_OK) {
-      Serial.println();
+      DEBUG_PRINTLN();
       agent_attempt++;
       delay(cfg.UROS_AGENT_RETRY_DELAY_MS); // no martillar la red ni el agente
       continue;
     }
     break;
   }
-  Serial.println("success");
+  DEBUG_PRINTLN("success");
   setBootState(BOOT_ROS_INIT);
 
   syncRosTime();
@@ -310,78 +310,92 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   // rc = rclc_node_init_default(&node, CONFIG::UROS_NODE_NAME, "", &support);
   rc = rclc_node_init_default(&node, cfg.robot_name.c_str(), "", &support);
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_node_init_default(");
-    Serial.println(cfg.robot_name.c_str());
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_node_init_default(");
+    DEBUG_PRINTLN(cfg.robot_name.c_str());
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
-  Serial.print("micro-ROS client key 0x");
-  Serial.print(client_key, HEX);
-  Serial.print("; ROS2 node /");
-  Serial.println(cfg.robot_name.c_str());
+  DEBUG_PRINT("micro-ROS client key 0x");
+  DEBUG_PRINT(client_key, HEX);
+  DEBUG_PRINT("; ROS2 node /");
+  DEBUG_PRINTLN(cfg.robot_name.c_str());
 
   rc = rclc_subscription_init_default(&twist_sub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), cfg.UROS_CMD_VEL_TOPIC_NAME);
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_subscription_init_best_effort(");
-    Serial.print(cfg.UROS_CMD_VEL_TOPIC_NAME);
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_subscription_init_best_effort(");
+    DEBUG_PRINT(cfg.UROS_CMD_VEL_TOPIC_NAME);
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
   rc = rclc_subscription_init_default(&lidar_power_sub, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool), "/lidar_power");
   if (rc != RCL_RET_OK) {
-      Serial.print("rclc_subscription_init_default(/lidar_power) error ");
-      Serial.println(rc);
+      DEBUG_PRINT("rclc_subscription_init_default(/lidar_power) error ");
+      DEBUG_PRINTLN(rc);
       return rc;
   }
 
   // rc = rclc_subscription_init_default(&led_sub, &node,
   //   ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, Led), "/rgb_led");
   // if (rc != RCL_RET_OK) {
-  //   Serial.print("rclc_subscription_init_default(/rgb_led) error ");
-  //   Serial.println(rc);
+  //   DEBUG_PRINT("rclc_subscription_init_default(/rgb_led) error ");
+  //   DEBUG_PRINTLN(rc);
   //   return rc;
   // }
 
   rc = rclc_publisher_init_best_effort(&nexus_telem_pub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, NexusTelemetry), "/telemetry");
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_publisher_init_best_effort(/nexus_telemetry) error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_publisher_init_best_effort(/nexus_telemetry) error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
   rc = rclc_publisher_init_best_effort(&control_status_pub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, ControlStatus), "/control_status");
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_publisher_init_best_effort(/control_status) error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_publisher_init_best_effort(/control_status) error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
   rc = rclc_publisher_init_default(&log_pub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(rcl_interfaces, msg, Log), cfg.UROS_LOG_TOPIC_NAME);
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_publisher_init_best_effort(");
-    Serial.print(cfg.UROS_LOG_TOPIC_NAME);
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_publisher_init_best_effort(");
+    DEBUG_PRINT(cfg.UROS_LOG_TOPIC_NAME);
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
   rc = rclc_publisher_init_best_effort(&imu_pub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(kalman_interfaces, msg, ImuData), "/imu_telem");
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_publisher_init_best_effort(");
-    Serial.print("/imu_telem");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_publisher_init_best_effort(");
+    DEBUG_PRINT("/imu_telem");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
+
+  // Reliable, no best_effort: si se pierden justo las muestras del momento en
+  // que el enlace se degrada, el topico no sirve para lo que existe.
+  rc = rclc_publisher_init_default(&link_health_pub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String), "/link_health");
+  if (rc != RCL_RET_OK) {
+    DEBUG_PRINT("rclc_publisher_init_default(/link_health) error ");
+    DEBUG_PRINTLN(rc);
+    return rc;
+  }
+  // El String de micro-ROS no reserva memoria: apunta al buffer estatico
+  link_health_msg.data.data = link_health_buf;
+  link_health_msg.data.capacity = sizeof(link_health_buf);
+  link_health_msg.data.size = 0;
 /*
   RCL_ERR(rclc_publisher_init_default(&diag_pub, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticArray), cfg.UROS_DIAG_TOPIC_NAME),
@@ -401,54 +415,54 @@ rcl_ret_t setupMicroROS(rclc_subscription_callback_t twist_sub_callback) {
   //RCL_ERR(rclc_parameter_server_init_default(&param_server, &node), CONFIG::ERR_UROS_PARAM);
   rc = rclc_parameter_server_init_with_option(&param_server, &node, &rclc_param_options);
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_parameter_server_init_with_option(");
-    Serial.print(") error ");
-    Serial.print(rc);
-    Serial.println("Make sure micro_ros_kalman library version is latest.");
+    DEBUG_PRINT("rclc_parameter_server_init_with_option(");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINT(rc);
+    DEBUG_PRINTLN("Make sure micro_ros_kalman library version is latest.");
     return rc;
   }
 
   rc = rclc_executor_init(&executor, &support.context,
     RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES + 3, &allocator); // +1 for each subscriber
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_executor_init(");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_executor_init(");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
   rc = rclc_executor_add_subscription(&executor, &twist_sub, &twist_msg,
     twist_sub_callback, ON_NEW_DATA);
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_executor_add_subscription(");
-    Serial.print("twist_msg");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_executor_add_subscription(");
+    DEBUG_PRINT("twist_msg");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
   rc = rclc_executor_add_subscription(&executor, &lidar_power_sub, &lidar_power_msg,
       lidar_power_sub_callback, ON_NEW_DATA);
   if (rc != RCL_RET_OK) {
-      Serial.print("rclc_executor_add_subscription(/lidar_power) error ");
-      Serial.println(rc);
+      DEBUG_PRINT("rclc_executor_add_subscription(/lidar_power) error ");
+      DEBUG_PRINTLN(rc);
       return rc;
   }
 
   // rc = rclc_executor_add_subscription(&executor, &led_sub, &led_msg,
   //   led_sub_callback, ON_NEW_DATA);
   // if (rc != RCL_RET_OK) {
-  //   Serial.print("rclc_executor_add_subscription(led_msg) error ");
-  //   Serial.println(rc);
+  //   DEBUG_PRINT("rclc_executor_add_subscription(led_msg) error ");
+  //   DEBUG_PRINTLN(rc);
   //   return rc;
   // }
 
   rc = rclc_executor_add_parameter_server(&executor, &param_server,
     on_ros_param_changed);
   if (rc != RCL_RET_OK) {
-    Serial.print("rclc_executor_add_parameter_server(");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rclc_executor_add_parameter_server(");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
     return rc;
   }
 
@@ -577,10 +591,10 @@ rcl_ret_t updateROSRealTimeParams() {
   RCL_RET(update_double(cfg.UROS_PARAM_MOTOR_LEFT_PWM_NOW, motorLeft.getCurrentPWM()));
   RCL_RET(update_double(cfg.UROS_PARAM_MOTOR_RIGHT_PWM_NOW, motorRight.getCurrentPWM()));
 
-  //Serial.print("L ");
-  //Serial.print(motorLeft.getEncoderValue());
-  //Serial.print("\tR ");
-  //Serial.println(motorRight.getEncoderValue());
+  //DEBUG_PRINT("L ");
+  //DEBUG_PRINT(motorLeft.getEncoderValue());
+  //DEBUG_PRINT("\tR ");
+  //DEBUG_PRINTLN(motorRight.getEncoderValue());
 
   suppress_param_log_print = false;
   return RCL_RET_OK;
@@ -614,7 +628,9 @@ rcl_ret_t updateROSConfigParams() {
 //}
 
 void logMsg(char* msg, uint8_t severity_level) {
-  if (WiFi.status() == WL_CONNECTED) {
+  // Antes se comprobaba el WiFi. Sobre serial el enlace solo esta vivo si hay
+  // sesion; publicar en IDLE seria escribir sobre entidades no creadas.
+  if (session_state != SESSION_IDLE) {
     rcl_interfaces__msg__Log msgLog;
     // https://docs.ros2.org/foxy/api/rcl_interfaces/msg/Log.html
     // builtin_interfaces__msg__Time stamp;
@@ -638,9 +654,9 @@ void logMsg(char* msg, uint8_t severity_level) {
 
     rcl_ret_t rc = rcl_publish(&log_pub, &msgLog, NULL);
     if (rc != RCL_RET_OK) {
-      Serial.print("rcl_publish(msgLog");
-      Serial.print(") error ");
-      Serial.println(rc);
+      DEBUG_PRINT("rcl_publish(msgLog");
+      DEBUG_PRINT(") error ");
+      DEBUG_PRINTLN(rc);
     }
   }
   
@@ -662,10 +678,10 @@ void logMsg(char* msg, uint8_t severity_level) {
       s = "WARN";
       break;
   }
-  Serial.print("LOG_");
-  Serial.print(s);
-  Serial.print(": ");
-  Serial.println(msg);
+  DEBUG_PRINT("LOG_");
+  DEBUG_PRINT(s);
+  DEBUG_PRINT(": ");
+  DEBUG_PRINTLN(msg);
 }
 
 /*

@@ -14,6 +14,7 @@
 
 #pragma once
 #include "robot_config.h"
+#include "debug_log.h"
 
 extern CONFIG cfg;
 
@@ -26,19 +27,19 @@ float getBatteryMilliVolts() {
 
 void setupADC() {
 //  if (!adcAttachPin(cfg.adc_bat_gpio))
-//    Serial.println("adcAttachPin() FAILED");
+//    DEBUG_PRINTLN("adcAttachPin() FAILED");
 
-  Serial.print("Battery ADC attenuation ");
-  Serial.print(cfg.adc_bat_atten);
+  DEBUG_PRINT("Battery ADC attenuation ");
+  DEBUG_PRINT(cfg.adc_bat_atten);
 
   float batt_mv = getBatteryMilliVolts();
   if (batt_mv < cfg.adc_bat_voltage_empty) {
-    Serial.println();
-    Serial.println("Battery NOT detected. Check battery switch, "
+    DEBUG_PRINTLN();
+    DEBUG_PRINTLN("Battery NOT detected. Check battery switch, "
       "connection or replace battery");
   } else {
-    Serial.print(", voltage ");
-    Serial.print(batt_mv*0.001f);
-    Serial.println("V");
+    DEBUG_PRINT(", voltage ");
+    DEBUG_PRINT(batt_mv*0.001f);
+    DEBUG_PRINTLN("V");
   }
 }

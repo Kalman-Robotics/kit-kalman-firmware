@@ -18,16 +18,17 @@
 #include "robot_config.h"
 #include <SPIFFS.h>
 #include <esp_wifi.h>
+#include "debug_log.h"
 
 extern CONFIG cfg;
 
 bool write_file(const char* FILE_PATH, const char* text) {
-  Serial.print("Writing file ");
-  Serial.print(FILE_PATH);
+  DEBUG_PRINT("Writing file ");
+  DEBUG_PRINT(FILE_PATH);
 
   File file = SPIFFS.open(FILE_PATH, FILE_WRITE);
   if (!file) {
-    Serial.print(" - file open failed");
+    DEBUG_PRINT(" - file open failed");
     return false;
   }
 
@@ -35,7 +36,7 @@ bool write_file(const char* FILE_PATH, const char* text) {
   if (text != NULL) {
     success = file.print(text);
     if (!success)
-      Serial.println(" - write failed");
+      DEBUG_PRINTLN(" - write failed");
   }
 
   file.close();
@@ -112,13 +113,13 @@ void printCurrentTime() {
 
   struct tm *tt = gmtime(&now);
   strftime(strftime_buf, sizeof(strftime_buf), "%c", tt);
-  Serial.print("UTC time ");
-  Serial.println(strftime_buf);
+  DEBUG_PRINT("UTC time ");
+  DEBUG_PRINTLN(strftime_buf);
 
   //localtime_r(&now, tt);
   //strftime(strftime_buf, sizeof(strftime_buf), "%c", tt);
-  //Serial.print("The current local date/time according to ESP32: ");
-  //Serial.println(strftime_buf);
+  //DEBUG_PRINT("The current local date/time according to ESP32: ");
+  //DEBUG_PRINTLN(strftime_buf);
 }
 
 void twistToWheelSpeeds(float speed_lin_x, float speed_ang_z,
@@ -144,8 +145,8 @@ const String micro_ros_error_string(int err) {
 
 void printByteAsHex(uint8_t b) {
   if (b < 16)
-    Serial.print('0');
-  Serial.print(b, HEX);
+    DEBUG_PRINT('0');
+  DEBUG_PRINT(b, HEX);
 }
 
 void printBytesAsHex(const uint8_t * buffer, uint16_t length) {
@@ -154,20 +155,20 @@ void printBytesAsHex(const uint8_t * buffer, uint16_t length) {
 
   for (uint16_t i = 0; i < length; i++) {
     printByteAsHex(buffer[i]);
-    Serial.print(' ');
+    DEBUG_PRINT(' ');
   }
 }
 
 void printlnNB(const String & s = "") { // non-blocking
   uint16_t tx_room = (uint16_t) Serial.availableForWrite();
   if (tx_room >= s.length())
-    Serial.println(s);
+    DEBUG_PRINTLN(s);
 }
 
 void printNB(const String & s) { // non-blocking
   uint16_t tx_room = (uint16_t) Serial.availableForWrite();
   if (tx_room >= s.length())
-    Serial.print(s);
+    DEBUG_PRINT(s);
 }
 
 void idle() {
@@ -180,42 +181,42 @@ void printWiFiChannel() {
   wifi_second_chan_t secondary_ch;
   esp_err_t err = esp_wifi_get_channel(&primary_ch, &secondary_ch);
   if (err == ESP_OK) {
-    Serial.print("Primary AP channel ");
-    Serial.println(primary_ch);
+    DEBUG_PRINT("Primary AP channel ");
+    DEBUG_PRINTLN(primary_ch);
 
-    Serial.print("Secondary channel ");
+    DEBUG_PRINT("Secondary channel ");
     switch(secondary_ch) {
       case WIFI_SECOND_CHAN_NONE:
-        Serial.print("NONE/HT20");
+        DEBUG_PRINT("NONE/HT20");
         break;
       case WIFI_SECOND_CHAN_ABOVE:
-        Serial.print("ABOVE/HT40");
+        DEBUG_PRINT("ABOVE/HT40");
         break;
       case WIFI_SECOND_CHAN_BELOW:
-        Serial.print("BELOW/HT40");
+        DEBUG_PRINT("BELOW/HT40");
         break;
       default:
-        Serial.print("Unknown");
+        DEBUG_PRINT("Unknown");
         break;
     }
-    Serial.print(" ");
+    DEBUG_PRINT(" ");
   } else {
-    Serial.print("esp_wifi_get_channel() failed ");
+    DEBUG_PRINT("esp_wifi_get_channel() failed ");
     switch(err) {
       case ESP_ERR_WIFI_CONN:
-        Serial.println("ESP_ERR_WIFI_CONN");
+        DEBUG_PRINTLN("ESP_ERR_WIFI_CONN");
         break;
       case ESP_ERR_WIFI_NOT_INIT:
-        Serial.println("ESP_ERR_WIFI_NOT_INIT");
+        DEBUG_PRINTLN("ESP_ERR_WIFI_NOT_INIT");
         break;
       case ESP_ERR_INVALID_ARG:
-        Serial.println("ESP_ERR_INVALID_ARG");
+        DEBUG_PRINTLN("ESP_ERR_INVALID_ARG");
         break;
       case ESP_ERR_WIFI_NOT_CONNECT:
-        Serial.println("ESP_ERR_WIFI_NOT_CONNECT");
+        DEBUG_PRINTLN("ESP_ERR_WIFI_NOT_CONNECT");
         break;
       default:
-        Serial.println(err);
+        DEBUG_PRINTLN(err);
         break;
     }
   }

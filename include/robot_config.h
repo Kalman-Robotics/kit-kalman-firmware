@@ -14,6 +14,7 @@
 
 #pragma once
 #include <SPIFFS.h>
+#include "debug_log.h"
 
 class CONFIG {
 public:
@@ -262,9 +263,9 @@ public:
         return "Line too long";
 
       int colon_idx = s.indexOf(':');
-      //Serial.println("colon_idx=" + String(colon_idx));
+      //DEBUG_PRINTLN("colon_idx=" + String(colon_idx));
       if (colon_idx < 0) {
-        //Serial.println("colon_idx<0");
+        //DEBUG_PRINTLN("colon_idx<0");
         return "Missing colon in line " + String(line);
       }
 
@@ -274,58 +275,58 @@ public:
           break;
       }
 
-      //Serial.println("ident=" + String(ident));
+      //DEBUG_PRINTLN("ident=" + String(ident));
       if (ident == colon_idx) {
-        //Serial.println("ident==colon_idx");
+        //DEBUG_PRINTLN("ident==colon_idx");
         return "Missing field name in line " + String(line);
       }
 
       field_name = s.substring(ident, colon_idx);
-      //Serial.println("field_name=" + field_name);
+      //DEBUG_PRINTLN("field_name=" + field_name);
       // check field name valid
 
       // find level
       uint8_t level;
       uint32_t id = 0;
-      //Serial.println("levels=" + String(levels));
+      //DEBUG_PRINTLN("levels=" + String(levels));
       if (levels > 0) {
         for(level = 0; level < levels; level++) {
           id = level_ident[level];
           if (ident <= id)
             break;
         }
-        //Serial.println("id=" + String(id) + ", level=" + String(level));
+        //DEBUG_PRINTLN("id=" + String(id) + ", level=" + String(level));
 
         if (ident > id) {
           levels++;
-          //Serial.println("ident > id");
+          //DEBUG_PRINTLN("ident > id");
           if (levels >= MAX_LEVEL) {
-            //Serial.println("levels >= MAX_LEVEL");
+            //DEBUG_PRINTLN("levels >= MAX_LEVEL");
             return "Max nesting level exceeded in line " + String(line);
           }
         } else
           levels = level+1;
       } else {
         levels = 1;
-        //Serial.println("levels==0 -> levels:=1");
+        //DEBUG_PRINTLN("levels==0 -> levels:=1");
       }
 
-      //Serial.println("levels=" + String(levels));
+      //DEBUG_PRINTLN("levels=" + String(levels));
       level_ident[levels-1] = ident;
       level_name[levels-1] = field_name;
 
       // zero out upper levels
-      //Serial.println("level_ident[" + String(levels) + "]:=0");
+      //DEBUG_PRINTLN("level_ident[" + String(levels) + "]:=0");
       level_ident[levels] = 0;
 
       if (s.length() > colon_idx + 2) {
-        //Serial.println("s.length() " + String(s.length()) + " > colon_idx+2");
+        //DEBUG_PRINTLN("s.length() " + String(s.length()) + " > colon_idx+2");
         if (s[colon_idx+1] != ' ') {
-          //Serial.println("s[colon_idx+1] " + String(s[colon_idx+1]) + " != space");
+          //DEBUG_PRINTLN("s[colon_idx+1] " + String(s[colon_idx+1]) + " != space");
           return "Space after colon expected in line " + String(line);
         }
         String param_value = s.substring(colon_idx+2);
-        //Serial.println("param_value=" + param_value);
+        //DEBUG_PRINTLN("param_value=" + param_value);
         set_param(level_name, param_value, levels);
       }
     }
@@ -336,10 +337,10 @@ public:
   void set_param(String* lname, const String & pvalue, uint8_t nlevels) {
 
     //for (uint8_t level = 0; level < nlevels; level++) {
-    //  Serial.print(lname[level]);    
-    //  Serial.print((level < nlevels-1) ? '.' : '=');
+    //  DEBUG_PRINT(lname[level]);    
+    //  DEBUG_PRINT((level < nlevels-1) ? '.' : '=');
     //}
-    //Serial.println(pvalue);
+    //DEBUG_PRINTLN(pvalue);
 
     // TODO check for errors, return error as string
     if (nlevels == 1) {

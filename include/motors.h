@@ -18,6 +18,7 @@
 #include "robot_config.h"
 #include "util.h"
 #include <soc/gpio_struct.h>
+#include "debug_log.h"
 
 const uint8_t MOTOR_COUNT = 2;
 MotorController motorLeft, motorRight;
@@ -118,13 +119,13 @@ void setMotorPWM(MotorController *motor_controller, float pwm) {
         // Hard brake
         digitalWrite(in1_pin, HIGH);
         digitalWrite(in2_pin, HIGH);
-        //Serial.println("hard brake");
+        //DEBUG_PRINTLN("hard brake");
         return;
       } else if (pwm < -1) {
         // Soft brake
         digitalWrite(in1_pin, LOW);
         digitalWrite(in2_pin, LOW);
-        //Serial.println("soft brake");
+        //DEBUG_PRINTLN("soft brake");
         return;
       }
       
@@ -134,7 +135,7 @@ void setMotorPWM(MotorController *motor_controller, float pwm) {
       #if ESP_IDF_VERSION_MAJOR >= 5
       if (!ledcAttachChannel(in2, cfg.MOT_PWM_FREQ,
         cfg.MOT_PWM_BITS, pwm_channel))
-        Serial.println("setMotorPWM() ledcAttachChannel() error");
+        DEBUG_PRINTLN("setMotorPWM() ledcAttachChannel() error");
       #else
       ledcAttachPin(in2, pwm_channel);
       #endif
@@ -194,11 +195,11 @@ void setupDriver(motor_driver_t motor_driver_type) {
              cfg.MOT_PWM_BITS, cfg.MOT_PWM_LEFT_CHANNEL) ||
           !ledcAttachChannel(cfg.mot_right_drv_gpio_in1_pwm, cfg.MOT_PWM_FREQ,
              cfg.MOT_PWM_BITS, cfg.MOT_PWM_RIGHT_CHANNEL))
-        Serial.println("setupDriver() ledcAttachChannel() error");
+        DEBUG_PRINTLN("setupDriver() ledcAttachChannel() error");
       #else
       if (!ledcSetup(cfg.MOT_PWM_LEFT_CHANNEL, cfg.MOT_PWM_FREQ, cfg.MOT_PWM_BITS) ||
           !ledcSetup(cfg.MOT_PWM_RIGHT_CHANNEL, cfg.MOT_PWM_FREQ, cfg.MOT_PWM_BITS))
-        Serial.println("setupDriver() ledcSetup() error");
+        DEBUG_PRINTLN("setupDriver() ledcSetup() error");
       ledcAttachPin(cfg.mot_left_drv_gpio_in1_pwm, cfg.MOT_PWM_LEFT_CHANNEL);
       ledcAttachPin(cfg.mot_right_drv_gpio_in1_pwm, cfg.MOT_PWM_RIGHT_CHANNEL);
       #endif
@@ -215,11 +216,11 @@ void setupDriver(motor_driver_t motor_driver_type) {
              cfg.MOT_PWM_BITS, cfg.MOT_PWM_LEFT_CHANNEL) ||
           !ledcAttachChannel(cfg.mot_right_drv_gpio_in2_cw, cfg.MOT_PWM_FREQ,
              cfg.MOT_PWM_BITS, cfg.MOT_PWM_RIGHT_CHANNEL))
-        Serial.println("setupDriver() ledcAttachChannel() error");            
+        DEBUG_PRINTLN("setupDriver() ledcAttachChannel() error");            
       #else
       if (!ledcSetup(cfg.MOT_PWM_LEFT_CHANNEL, cfg.MOT_PWM_FREQ, cfg.MOT_PWM_BITS) ||
           !ledcSetup(cfg.MOT_PWM_RIGHT_CHANNEL, cfg.MOT_PWM_FREQ, cfg.MOT_PWM_BITS))
-        Serial.println("setupDriver() ledcSetup() error");            
+        DEBUG_PRINTLN("setupDriver() ledcSetup() error");            
       #endif
 
       break;
@@ -227,14 +228,14 @@ void setupDriver(motor_driver_t motor_driver_type) {
 }
 
 void setupMotors() {
-  Serial.print("Motor driver type ");
-  Serial.print(cfg.motor_driver_type);
+  DEBUG_PRINT("Motor driver type ");
+  DEBUG_PRINT(cfg.motor_driver_type);
 
   if (cfg.motor_driver_type == "PWM_CW") {
     setupDriver(MOT_DRIVER_PWM_CW);
   } else {
     if (cfg.motor_driver_type != "IN1_IN2")
-      Serial.print(" not recognized, defaulting to IN1_IN2");
+      DEBUG_PRINT(" not recognized, defaulting to IN1_IN2");
     setupDriver(MOT_DRIVER_IN1_IN2);
   }
 
@@ -244,29 +245,29 @@ void setupMotors() {
   setMotorPWM(&motorLeft, 0);
   setMotorPWM(&motorRight, 0);
 
-  Serial.print("; motor encoder type ");
-  Serial.print(cfg.motor_encoder_type);
+  DEBUG_PRINT("; motor encoder type ");
+  DEBUG_PRINT(cfg.motor_encoder_type);
 
   if (cfg.motor_encoder_type == "FG") {
     setupEncoders(MOT_ENCODER_FG);
   } else {
     if (cfg.motor_encoder_type != "AB_QUAD")
-      Serial.print(" not recognized, defaulting to AB_QUAD");
+      DEBUG_PRINT(" not recognized, defaulting to AB_QUAD");
     setupEncoders(MOT_ENCODER_AB_QUAD);
   }
-  Serial.println();
+  DEBUG_PRINTLN();
 
   motorLeft.setMaxRPM(cfg.motor_rpm_max);
   motorRight.setMaxRPM(cfg.motor_rpm_max);
-  Serial.print("Motor Max RPM ");
-  Serial.print(motorLeft.getMaxRPM());
+  DEBUG_PRINT("Motor Max RPM ");
+  DEBUG_PRINT(motorLeft.getMaxRPM());
 
   motorLeft.setEncoderPPR(cfg.motor_encoder_ppr);
   motorRight.setEncoderPPR(cfg.motor_encoder_ppr);
-  Serial.print("; encoder PPR ");
-  Serial.print(motorLeft.getEncoderPPR());
-  Serial.print(" TPR "); // ticks per revolution
-  Serial.println(motorLeft.getEncoderTPR());
+  DEBUG_PRINT("; encoder PPR ");
+  DEBUG_PRINT(motorLeft.getEncoderPPR());
+  DEBUG_PRINT(" TPR "); // ticks per revolution
+  DEBUG_PRINTLN(motorLeft.getEncoderTPR());
 
   motorLeft.setPIDConfig(cfg.motor_driver_pid_kp, cfg.motor_driver_pid_ki,
     cfg.motor_driver_pid_kd, cfg.motor_driver_pid_period, cfg.motor_driver_pid_kpm);
@@ -282,35 +283,35 @@ void setupMotors() {
   motorRight.reverseEncoder(cfg.mot_right_enc_reverse);
 
   if (mot_reversed)
-    Serial.print("Motor direction reversed: ");
+    DEBUG_PRINT("Motor direction reversed: ");
 
   if (cfg.mot_left_drv_reverse)
-    Serial.print("left ");
+    DEBUG_PRINT("left ");
   if (cfg.mot_left_drv_reverse)
-    Serial.print("right");
+    DEBUG_PRINT("right");
 
   if (mot_reversed) {
-    Serial.print('.');
+    DEBUG_PRINT('.');
     if (enc_reversed)
-      Serial.print(' ');
+      DEBUG_PRINT(' ');
   }
 
   if (enc_reversed)
-    Serial.print("Encoder reversed: ");
+    DEBUG_PRINT("Encoder reversed: ");
   if (cfg.mot_left_enc_reverse)
-    Serial.print("left ");
+    DEBUG_PRINT("left ");
   if (cfg.mot_right_enc_reverse)
-    Serial.print("right");
+    DEBUG_PRINT("right");
 
   if (mot_reversed || enc_reversed)
-    Serial.println();
+    DEBUG_PRINTLN();
 }
 
 void setMotorSpeeds(float rpm_left, float rpm_right) {
   motorRight.setTargetRPM(rpm_right);
   motorLeft.setTargetRPM(rpm_left);
-  //Serial.print("setMotorSpeeds ");
-  //Serial.print(rpm_right);
-  //Serial.print(" ");
-  //Serial.println(rpm_left);
+  //DEBUG_PRINT("setMotorSpeeds ");
+  //DEBUG_PRINT(rpm_right);
+  //DEBUG_PRINT(" ");
+  //DEBUG_PRINTLN(rpm_left);
 }

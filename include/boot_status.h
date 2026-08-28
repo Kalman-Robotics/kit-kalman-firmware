@@ -88,3 +88,22 @@ inline void setBootState(boot_state_t state) {
       break;
   }
 }
+
+// Estado de la sesion con el agente micro-ROS. Vivia en session.h junto al
+// protocolo UDP con la Raspberry; sobre el transporte serial ese protocolo ya
+// no existe --el ping decide-- pero los estados siguen gobernando el LiDAR,
+// los motores y el LED de sistema.
+enum session_state_t {
+  SESSION_IDLE,       // sin agente: LiDAR parado, sin entidades micro-ROS
+  SESSION_ACTIVE,     // agente respondiendo, operacion normal
+  SESSION_GRACE,      // agente perdido: se espera por si vuelve
+};
+
+inline const char * sessionStateName(session_state_t s) {
+  switch (s) {
+    case SESSION_IDLE:   return "IDLE";
+    case SESSION_ACTIVE: return "ACTIVE";
+    case SESSION_GRACE:  return "GRACE";
+    default:             return "UNKNOWN";
+  }
+}

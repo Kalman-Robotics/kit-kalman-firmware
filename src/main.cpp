@@ -17,14 +17,10 @@
 #endif
 
 #include "robot_config.h"
+#include "boot_status.h"
 #include "util.h"
-#include "session.h"
-#include "diag.h"
-#include <ArduinoOTA.h>
-#include <WiFi.h>
 #include <stdio.h>
 #include "motors.h"
-#include "ap.h"
 #include "lidar.h"
 #include "ros.h"
 #include "adc.h"
@@ -32,6 +28,7 @@
 #include "buzzer.h"
 #include "led_rgb.h"
 #include <SPIFFS.h>
+#include "debug_log.h"
 
 #define PIN_BUZZER 10
 CONFIG cfg;
@@ -76,7 +73,6 @@ void calcOdometry(int64_t step_time_us, float joint_pos_delta_right, float joint
 void spinTelem(bool force_pub);
 void spinControlStatus();
 void spinPing();
-bool spinWiFi();
 void spinSession();
 void spinSessionLed();
 // Motivo del ultimo reset y salud del bucle: lo unico que quedo de la
@@ -86,23 +82,14 @@ esp_reset_reason_t g_rst_reason = ESP_RST_UNKNOWN;
 uint32_t g_loop_max_ms = 0;
 uint32_t g_loop_max_ms_since_report = 0;
 
-// Contadores del enlace; ninguno dispara acciones por su cuenta
+// Contadores del enlace; ninguno dispara acciones por su cuenta. Se publican
+// en /link_health a 1 Hz: ese topico es la unica forma de observarlos ahora
+// que el UART lo ocupa el transporte micro-ROS.
 uint32_t g_ping_fails = 0;
 uint32_t g_agent_lost = 0;
-uint32_t g_wifi_drops = 0;
 uint32_t g_cmd_vel_rx = 0;
 
-WiFiUDP diag_udp;
-
-RTC_NOINIT_ATTR SessionWant g_session_want;
-
-char     g_last_cmd[24] = {0};
-int64_t  g_last_cmd_us = 0;
-uint32_t g_cmd_count = 0;
-bool     g_ota_active = false;
-
-// Estado de la sesion de laboratorio. Ver include/session.h para el protocolo.
-SessionLink session_link;
+// Estado de la sesion con el agente. Lo gobierna spinPing().
 session_state_t session_state = SESSION_IDLE;  // hasta que setup() decida
 unsigned long session_grace_start_ms = 0;
 void sessionToIdle(const char * reason);
@@ -129,15 +116,15 @@ void twist_sub_callback(const void *msgin) {
 
   float target_speed_lin_x = constrain(msg->linear.x, -0.15f, 0.15f);
   float target_speed_ang_z = constrain(msg->angular.z, -1.0f, 1.0f);
-  //Serial.print("linear.x ");
-  //Serial.print(msg->linear.x);
-  //Serial.print(", angular.z ");
-  //Serial.println(msg->angular.z);
+  //DEBUG_PRINT("linear.x ");
+  //DEBUG_PRINT(msg->linear.x);
+  //DEBUG_PRINT(", angular.z ");
+  //DEBUG_PRINTLN(msg->angular.z);
 
   if (msg->linear.y != 0) {
-    Serial.print("Warning: /cmd_vel linear.y = ");
-    Serial.print(msg->linear.y);
-    Serial.println(" not zero");
+    DEBUG_PRINT("Warning: /cmd_vel linear.y = ");
+    DEBUG_PRINT(msg->linear.y);
+    DEBUG_PRINTLN(" not zero");
   }
 
   // Twist to target wheel speeds
@@ -153,10 +140,10 @@ void twist_sub_callback(const void *msgin) {
   float twist_target_rpm_right = cfg.speed_to_rpm(twist_target_speed_right);
   float twist_target_rpm_left = cfg.speed_to_rpm(twist_target_speed_left);
 
-  //Serial.print(", twist_target_rpm_right ");
-  //Serial.print(twist_target_rpm_right);
-  //Serial.print(", twist_target_rpm_left ");
-  //Serial.print(twist_target_rpm_left);
+  //DEBUG_PRINT(", twist_target_rpm_right ");
+  //DEBUG_PRINT(twist_target_rpm_right);
+  //DEBUG_PRINT(", twist_target_rpm_left ");
+  //DEBUG_PRINT(twist_target_rpm_left);
 
   // Limit target RPM
   float limited_target_rpm_right =
@@ -164,10 +151,10 @@ void twist_sub_callback(const void *msgin) {
   float limited_target_rpm_left =
     absMin(twist_target_rpm_left, motorLeft.getMaxRPM());
 
-  //Serial.print(", limited_target_rpm_right ");
-  //Serial.print(limited_target_rpm_right);
-  //Serial.print(", limited_target_rpm_left ");
-  //Serial.print(limited_target_rpm_left);
+  //DEBUG_PRINT(", limited_target_rpm_right ");
+  //DEBUG_PRINT(limited_target_rpm_right);
+  //DEBUG_PRINT(", limited_target_rpm_left ");
+  //DEBUG_PRINT(limited_target_rpm_left);
 
   // Scale down both target RPMs to within limits
   if (twist_target_rpm_right != limited_target_rpm_right ||
@@ -195,10 +182,10 @@ void twist_sub_callback(const void *msgin) {
     ramp_target_rpm_left = twist_target_rpm_left;
   }
 
-  //Serial.print(", ramp_target_rpm_ri  ght ");
-  //Serial.print(ramp_target_rpm_right);
-  //Serial.print(", ramp_target_rpm_left ");
-  //Serial.println(ramp_target_rpm_left);
+  //DEBUG_PRINT(", ramp_target_rpm_ri  ght ");
+  //DEBUG_PRINT(ramp_target_rpm_right);
+  //DEBUG_PRINT(", ramp_target_rpm_left ");
+  //DEBUG_PRINTLN(ramp_target_rpm_left);
 
   if (!ramp_enabled) {
     setMotorSpeeds(ramp_target_rpm_left, ramp_target_rpm_right);
@@ -262,7 +249,7 @@ String set_param_callback(const char * param_name, const char * param_value) {
 
   if (param_name == NULL) {
     write_file(cfg.NETWORK_YAML_PATH, text.c_str());
-    Serial.println(", restarting...");
+    DEBUG_PRINTLN(", restarting...");
     delay(100);
     ESP.restart();
     return "";
@@ -270,97 +257,6 @@ String set_param_callback(const char * param_name, const char * param_value) {
     text = text + String(param_name) + ": " + String(param_value) + '\n';
     return strcmp(param_name, "pass") == 0 ? "****" : String(param_value);
   }
-}
-
-static inline bool initWiFi(const String & ssid, const String & passw,
-  boot_state_t led_state = BOOT_WIFI_CONNECTING) {
-
-  // Tras un reinicio por software el modulo conserva estado del arranque
-  // anterior; reasociar encima deja el stack WiFi inconsistente. Bajar la
-  // sesion antes de cada intento evita quedarse a medio asociar.
-  WiFi.disconnect(true);
-  delay(100);
-  WiFi.mode(WIFI_STA);
-  // El modo de ahorro de energia hace dormir la radio entre beacons, lo que
-  // agrega latencia a cada paquete UDP de micro-ROS
-  WiFi.setSleep(false);
-
-  // IP fija: se saltea el DHCP, que agrega entre 200 ms y 2 s al arranque y es
-  // una fuente de fallos intermitentes. Vacio en config.yaml = DHCP.
-  if (cfg.static_ip.length() > 0) {
-    IPAddress ip, gw, mask;
-    if (!ip.fromString(cfg.static_ip)) {
-      Serial.print("Invalid robot.wifi.static_ip: ");
-      Serial.println(cfg.static_ip);
-      return false;
-    }
-    // Sin gateway explicito se asume el AP; sin mascara, /24
-    if (!gw.fromString(cfg.gateway_ip))
-      gw = IPAddress(ip[0], ip[1], ip[2], 1);
-    if (!mask.fromString(cfg.subnet_mask))
-      mask = IPAddress(255, 255, 255, 0);
-
-    // DNS = gateway: el firmware solo habla con el agente por IP, pero sin DNS
-    // configurado algunas versiones del stack retrasan el DHCP igual
-    if (!WiFi.config(ip, gw, mask, gw)) {
-      Serial.println("WiFi.config() failed, falling back to DHCP");
-    } else {
-      Serial.print("Static IP ");
-      Serial.print(cfg.static_ip);
-      Serial.print(" gw ");
-      Serial.println(gw);
-    }
-  }
-
-  WiFi.begin(ssid, passw);
-
-  // Sondear rapido y parpadear lento: con un delay() largo por vuelta el
-  // WiFi puede quedar asociado hasta 1 s antes de que el bucle lo note.
-  const uint32_t poll_delay_ms = 50;
-  const uint32_t blink_period_ms = 500;
-  unsigned long startMillis = millis();
-  unsigned long last_blink_ms = 0;
-  bool blink_on = false;
-
-  Serial.println();
-  Serial.print("Connecting to WiFi ");
-  Serial.print(ssid);
-  Serial.print(" ...");
-
-  while (WiFi.status() != WL_CONNECTED) {
-    if (millis() - startMillis >= cfg.WIFI_CONN_TIMEOUT_MS) {
-      Serial.println(" timed out");
-      return false;
-    }
-
-    if (millis() - last_blink_ms >= blink_period_ms) {
-      last_blink_ms = millis();
-      blink_on = !blink_on;
-      setBootState(led_state);
-      digiWrite(cfg.led_sys_gpio, blink_on ? HIGH : LOW, cfg.led_sys_invert);
-    }
-    delay(poll_delay_ms);
-  }
-
-  // WL_CONNECTED solo dice que la asociacion cerro; el DHCP puede seguir en
-  // curso. Arrancar micro-ROS sin IP valida es una de las causas de quedarse
-  // colgado buscando al agente.
-  unsigned long ip_wait_start_ms = millis();
-  while (WiFi.localIP() == INADDR_NONE) {
-    if (millis() - ip_wait_start_ms >= cfg.WIFI_DHCP_TIMEOUT_MS) {
-      Serial.println(" connected but no IP assigned");
-      return false;
-    }
-    setBootState(BOOT_WIFI_NO_IP);
-    delay(20);
-  }
-
-  digiWrite(cfg.led_sys_gpio, LOW, cfg.led_sys_invert);
-  Serial.print(" connected, ");
-  Serial.print("IP ");
-  Serial.println(WiFi.localIP());
-  //printWiFiChannel();
-  return true;
 }
 
 void spinTelem(bool force_pub) {
@@ -375,10 +271,10 @@ void spinTelem(bool force_pub) {
   telem_prev_pub_time_us = time_now_us;
 
   //if (++telem_pub_count % 5 == 0) {
-  //  Serial.print("RPM L ");
-  //  Serial.print(motorLeft.getCurrentRPM());
-  //  Serial.print(" R ");
-  //  Serial.println(motorRight.getCurrentRPM());
+  //  DEBUG_PRINT("RPM L ");
+  //  DEBUG_PRINT(motorLeft.getCurrentRPM());
+  //  DEBUG_PRINT(" R ");
+  //  DEBUG_PRINTLN(motorRight.getCurrentRPM());
   //}
 
   stat_sum_spin_telem_period_us += step_time_us;
@@ -429,8 +325,8 @@ void spinControlStatus() {
 
   rcl_ret_t rc = rcl_publish(&control_status_pub, &control_status_msg, NULL);
   if (rc != RCL_RET_OK) {
-    Serial.print("rcl_publish(control_status) error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rcl_publish(control_status) error ");
+    DEBUG_PRINTLN(rc);
   }
 }
 
@@ -443,10 +339,9 @@ void publishTelem(int64_t step_time_us) {
   float joint_pos_delta[MOTOR_COUNT];
   float step_time = 1e-6 * (float)step_time_us;
 
-  long rssi_dbm = WiFi.RSSI();
-  rssi_dbm = rssi_dbm > 127 ? 127 : rssi_dbm;
-  rssi_dbm = rssi_dbm < -128 ? -128 : rssi_dbm;
-  nexus_msg.wifi_rssi_dbm = (int8_t) rssi_dbm;
+  // El campo sigue en el .msg de NexusTelemetry y quitarlo obligaria a
+  // regenerar libmicroros.a. Sobre serial no hay radio que medir: 0 = sin dato.
+  nexus_msg.wifi_rssi_dbm = 0;
 
   for (unsigned char i = 0; i < MOTOR_COUNT; i++) {
     joint[i].pos = i == 0 ? motorLeft.getShaftAngle() : motorRight.getShaftAngle();
@@ -463,8 +358,8 @@ void publishTelem(int64_t step_time_us) {
 
   rcl_ret_t rc = rcl_publish(&nexus_telem_pub, &nexus_msg, NULL);
   if (rc != RCL_RET_OK) {
-    Serial.print("rcl_publish(nexus_msg) error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rcl_publish(nexus_msg) error ");
+    DEBUG_PRINTLN(rc);
   }
 
   nexus_msg.lds.size = 0;
@@ -514,6 +409,41 @@ void calcOdometry(int64_t step_time_us, float joint_pos_delta_right,
   nexus_msg.odom_vel_yaw = d_yaw / d_time;
 }
 
+// Salud del enlace, publicada en /link_health a 1 Hz.
+//
+// Con el transporte serial ocupando el UART los Serial.print ya no salen a
+// ningun lado, asi que este topico es la unica forma de observar como se
+// comporta la conexion durante las pruebas de estabilidad. Se publica tanto en
+// exito como en fallo: una serie continua permite ver la degradacion, no solo
+// el momento de la caida.
+void publishLinkHealth(bool ping_ok, uint32_t rtt_us, uint8_t fail_streak) {
+  if (session_state == SESSION_IDLE)
+    return;
+
+  const char * state = sessionStateName(session_state);
+
+  int n = snprintf(link_health_buf, sizeof(link_health_buf),
+    "{\"ok\":%s,\"rtt_us\":%lu,\"fail_streak\":%u,"
+    "\"ping_fails\":%lu,\"agent_lost\":%lu,"
+    "\"state\":\"%s\",\"uptime_s\":%lu,\"heap\":%lu}",
+    ping_ok ? "true" : "false",
+    (unsigned long)rtt_us,
+    (unsigned)fail_streak,
+    (unsigned long)g_ping_fails,
+    (unsigned long)g_agent_lost,
+    state,
+    (unsigned long)(millis() / 1000),
+    (unsigned long)ESP.getFreeHeap());
+
+  if (n <= 0)
+    return;
+  // snprintf trunca en vez de desbordar, pero devuelve lo que habria escrito
+  link_health_msg.data.size = (n < (int)sizeof(link_health_buf)) ?
+    (size_t)n : sizeof(link_health_buf) - 1;
+
+  rcl_publish(&link_health_pub, &link_health_msg, NULL);
+}
+
 void spinPing() {
   static uint8_t ping_fail_count = 0;
   int64_t time_now_us = esp_timer_get_time();
@@ -524,26 +454,27 @@ void spinPing() {
 
   ping_prev_pub_time_us = time_now_us;
 
-  // Sin WiFi el ping no puede salir: no gastar el presupuesto de fallos aqui,
-  // de eso se encarga la reconexion de spinWiFi()
-  if (WiFi.status() != WL_CONNECTED)
-    return;
-
+  // Sobre serial el ping es el unico juez del enlace: ya no hay un spinWiFi()
+  // que se ocupe de la reconexion por su cuenta.
+  int64_t ping_start_us = esp_timer_get_time();
   rmw_ret_t rc = rmw_uros_ping_agent(cfg.UROS_PING_TIMEOUT_MS, 1);
+  uint32_t ping_rtt_us = (uint32_t)(esp_timer_get_time() - ping_start_us);
+
   if (rc != RMW_RET_OK) {
     g_ping_fails++;
-    Serial.print("Ping failed (");
-    Serial.print(++ping_fail_count);
-    Serial.print("/");
-    Serial.print(cfg.UROS_PING_MAX_FAILS);
-    Serial.println(")");
+    ping_fail_count++;
+    DEBUG_PRINT("Ping failed (");
+    DEBUG_PRINT(ping_fail_count);
+    DEBUG_PRINT("/");
+    DEBUG_PRINT(cfg.UROS_PING_MAX_FAILS);
+    DEBUG_PRINTLN(")");
     if (ping_fail_count >= cfg.UROS_PING_MAX_FAILS &&
         session_state == SESSION_ACTIVE) {
-      // No se reinicia aca: puede ser un corte de red o un reinicio del
-      // contenedor, y en ese caso el agente vuelve en segundos. Se entra en
-      // GRACE y se espera; si fue fin de sesion, la Raspberry avisa
-      // SESSION_END y se corta la espera de inmediato.
-      Serial.println("micro-ROS agent lost, entering GRACE");
+      // No se reinicia aca: el agente puede haberse reiniciado del lado del
+      // host y volver en segundos. Se entra en GRACE y se espera; si el cable
+      // se desconecto, el ping seguira fallando y de eso se encarga el
+      // temporizador de gracia.
+      DEBUG_PRINTLN("micro-ROS agent lost, entering GRACE");
       setMotorSpeeds(0, 0);
       lidar->stop();
       session_state = SESSION_GRACE;
@@ -554,12 +485,14 @@ void spinPing() {
     // El agente volvio dentro del periodo de gracia: es el unico caso que se
     // resuelve sin reiniciar
     if (session_state == SESSION_GRACE) {
-      Serial.println("micro-ROS agent recovered, back to ACTIVE");
+      DEBUG_PRINTLN("micro-ROS agent recovered, back to ACTIVE");
       session_state = SESSION_ACTIVE;
       lidar->start();
     }
     ping_fail_count = 0;
   }
+
+  publishLinkHealth(rc == RMW_RET_OK, ping_rtt_us, ping_fail_count);
 }
 
 void updateROSParams() {
@@ -567,8 +500,8 @@ void updateROSParams() {
     ros_config_params_changed = false;
     rcl_ret_t ret = updateROSConfigParams();
     if (ret != RCL_RET_OK) {
-      Serial.print("updateROSConfigParams() error ");
-      Serial.println(ret);
+      DEBUG_PRINT("updateROSConfigParams() error ");
+      DEBUG_PRINTLN(ret);
     }
   }
 
@@ -578,70 +511,12 @@ void updateROSParams() {
 
     rcl_ret_t ret = updateROSRealTimeParams();
     if (ret != RCL_RET_OK) {
-      Serial.print("updateROSRealTimeParams() error ");
-      Serial.println(ret);
+      DEBUG_PRINT("updateROSRealTimeParams() error ");
+      DEBUG_PRINTLN(ret);
     }
 
     ros_params_update_prev_time_us = time_now_us;
   }
-}
-
-// Vigila el WiFi durante la operacion y lo reconecta activamente. Antes esto
-// quedaba librado a la reconexion automatica del stack del ESP32; si esa falla
-// el robot se queda con motores y LiDAR parados de forma indefinida.
-// No bloquea: cada llamada hace un solo paso y vuelve al loop().
-// Vigila el WiFi y lo reconecta. Corre en TODOS los estados, tambien en IDLE:
-// sin red el robot no puede recibir el SESSION_START que lo saca de ahi, asi
-// que la conexion es la unica cosa que debe estar garantizada siempre.
-// Reintenta cada 2 s y, si a los 8 s no volvio, reinicia: cuando el stack de
-// WiFi queda inconsistente reconectar no funciona y esperar solo alarga la
-// caida.
-bool spinWiFi() {
-  static bool wifi_ok_prev = true;
-  static unsigned long wifi_lost_ms = 0;
-  static unsigned long last_retry_ms = 0;
-
-  bool wifi_ok = WiFi.status() == WL_CONNECTED;
-
-  if (wifi_ok && !wifi_ok_prev) {
-    Serial.print("WiFi connection restored, IP ");
-    Serial.println(WiFi.localIP());
-    // El socket quedo atado a la IP anterior
-    session_link.restart();
-    if (session_state == SESSION_ACTIVE)
-      lidar->start();
-    wifi_lost_ms = 0;
-  } else if (!wifi_ok && wifi_ok_prev) {
-    Serial.println("WiFi connection lost: pausing motors, LiDAR");
-    g_wifi_drops++;
-    setMotorSpeeds(0, 0);
-    lidar->stop();
-    wifi_lost_ms = millis();
-    last_retry_ms = millis();
-  }
-  wifi_ok_prev = wifi_ok;
-
-  if (!wifi_ok) {
-    // Tras el plazo de gracia se reinicia: el socket de micro-ROS quedo atado a
-    // la sesion anterior, asi que reconectar el WiFi solo no alcanza para
-    // recuperar la sesion con el agente.
-    if (millis() - wifi_lost_ms >= cfg.WIFI_RECONNECT_TIMEOUT_MS) {
-      Serial.println("WiFi not recovered, restarting...");
-      Serial.flush();
-      ESP.restart();
-    }
-
-    if (millis() - last_retry_ms >= cfg.WIFI_RECONNECT_RETRY_MS) {
-      last_retry_ms = millis();
-      Serial.println("Reconnecting to WiFi ...");
-      WiFi.disconnect(true);
-      WiFi.mode(WIFI_STA);
-      WiFi.setSleep(false);
-      WiFi.begin(cfg.ssid, cfg.pass);
-    }
-  }
-
-  return wifi_ok;
 }
 
 static unsigned long session_idle_poll_ms = 0;
@@ -651,144 +526,30 @@ static unsigned long session_idle_poll_ms = 0;
 // sesion es reiniciar. Se hace aca, cuando ya no hay alumno esperando, y no
 // durante GRACE, donde el reinicio costaria segundos de reconexion.
 void sessionToIdle(const char * reason) {
-  // Al volver a IDLE el proximo arranque NO debe buscar al agente: se espera
-  // un SESSION_START nuevo
-  sessionSetWantConnect(false);
-  Serial.print("Session -> IDLE (");
-  Serial.print(reason);
-  Serial.println("), restarting to await next session");
+  DEBUG_PRINT("Session -> IDLE (");
+  DEBUG_PRINT(reason);
+  DEBUG_PRINTLN("), restarting to await next session");
   setMotorSpeeds(0, 0);
   lidar->stop();
-  // Avisar antes de reiniciar: si no, la Raspberry solo ve que el robot dejo
-  // de responder y no sabe si fue un fallo o el fin normal de la sesion
-  session_link.announce("SESSION_ENDED", SESSION_IDLE);
-  Serial.flush();
+  // Sin Serial.flush(): el UART lo ocupa el transporte micro-ROS y lo que
+  // quede en el buffer son tramas XRCE-DDS de una sesion que ya termino.
   delay(400);
   ESP.restart();
 }
 
 // Procesa los avisos de la Raspberry y administra el periodo de gracia.
-// Puentes usados por diag.h para atender los comandos de control
-const char * diagSessionState() { return sessionStateName(session_state); }
-
-void diagStopMotors() {
-  ramp_target_rpm_right = 0;
-  ramp_target_rpm_left = 0;
-  setMotorSpeeds(0, 0);
-}
-
-void diagResetOdom() {
-  nexus_msg.odom_pos_x = 0;
-  nexus_msg.odom_pos_y = 0;
-  nexus_msg.odom_pos_yaw = 0;
-  nexus_msg.odom_vel_x = 0;
-  nexus_msg.odom_vel_yaw = 0;
-}
-
-// Ultimos 4 hex de la MAC
-String diagRebootToken() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char t[5];
-  snprintf(t, sizeof(t), "%02X%02X", mac[4], mac[5]);
-  return String(t);
-}
-
-float diagOdomX()   { return nexus_msg.odom_pos_x; }
-float diagOdomYaw() { return nexus_msg.odom_pos_yaw; }
-
-void diagNoteCmd(const String & cmd) {
-  strncpy(g_last_cmd, cmd.c_str(), sizeof(g_last_cmd) - 1);
-  g_last_cmd[sizeof(g_last_cmd) - 1] = 0;
-  g_last_cmd_us = esp_timer_get_time();
-  g_cmd_count++;
-}
-
-// Actualizacion por WiFi. La tabla default_8MB ya reserva dos particiones de
-// aplicacion de 3.34 MB cada una y la imagen ocupa 1.13 MB, asi que no hay que
-// reorganizar el flash: OTA escribe en la particion inactiva y, si la carga se
-// corta a mitad, el bootloader sigue arrancando la anterior.
-void setupOTA() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char host[32];
-  snprintf(host, sizeof(host), "esp32s3-%02X%02X%02X",
-           mac[3], mac[4], mac[5]);
-
-  ArduinoOTA.setHostname(host);
-  ArduinoOTA.setPassword(cfg.OTA_PASSWORD);
-
-  ArduinoOTA.onStart([]() {
-    // Parar todo antes de flashear: la escritura bloquea el loop varios
-    // segundos y un robot en movimiento no tendria quien lo frene
-    Serial.println("[OTA] inicio: parando motores y LiDAR");
-    ramp_target_rpm_right = 0;
-    ramp_target_rpm_left = 0;
-    setMotorSpeeds(0, 0);
-    lidar->stop();
-    // Sin esto el watchdog de RX podria provocar un panic a mitad de la carga
-    g_ota_active = true;
-  });
-
-  ArduinoOTA.onEnd([]() {
-    Serial.println("[OTA] completado, reiniciando");
-    Serial.flush();
-  });
-
-  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
-    static uint8_t last_pct = 255;
-    uint8_t pct = total ? (done * 100) / total : 0;
-    if (pct != last_pct && pct % 10 == 0) {
-      last_pct = pct;
-      Serial.print("[OTA] ");
-      Serial.print(pct);
-      Serial.println("%");
-    }
-  });
-
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.print("[OTA] error ");
-    Serial.println(error);
-    // La carga fallo: el bootloader seguira arrancando la particion anterior
-    g_ota_active = false;
-    lidar->start();
-  });
-
-  ArduinoOTA.begin();
-  Serial.print("OTA activo, hostname ");
-  Serial.println(host);
-}
-
+// Gestion de la sesion sobre el enlace serial.
+//
+// Con WiFi la sesion la anunciaba la Raspberry por UDP, porque el agente vivia
+// en un contenedor que aparecia y desaparecia y por red no habia forma de
+// distinguir "aun no empezo" de "se cayo". Sobre serial esa ambiguedad no
+// existe: si el agente responde al ping, hay sesion. spinPing() ya mueve
+// ACTIVE <-> GRACE, asi que aqui solo queda el plazo maximo de gracia.
 void spinSession() {
-  String event;
-  if (session_link.poll(event, session_state)) {
-    if (event == "SESSION_START") {
-      if (session_state == SESSION_GRACE) {
-        // El agente volvio dentro del periodo de gracia: el ping lo detecta y
-        // vuelve a ACTIVE por su cuenta, aca solo se registra
-        Serial.println("Session: START recibido durante GRACE");
-      } else if (session_state == SESSION_IDLE) {
-        Serial.println("Session: START recibido, reiniciando para conectar");
-        sessionSetWantConnect(true);  // sobrevive al reinicio
-        Serial.flush();
-        // El ACK ya salio (repetido) en poll(); este margen asegura que la
-        // radio lo transmita antes de que el chip se reinicie
-        delay(400);
-        ESP.restart();
-      }
-    } else if (event == "SESSION_END") {
-      // Corta el periodo de gracia: no fue un corte de red, la sesion termino
-      if (session_state != SESSION_IDLE)
-        sessionToIdle("SESSION_END");
-    }
-    // PING y cualquier otro evento ya recibieron su ACK en poll()
-  }
-
-  // Una sola vez: en modo diagnostico DIAG_RESTART no reinicia, y sin esta
-  // guarda sessionToIdle() se reintentaba en cada iteracion del loop --365
-  // veces en una prueba--, con su setMotorSpeeds + lidar->stop + delay(200)
-  // cada vez. Eso degradaba el bucle de 56 a 265 ms y convertia un corte de
-  // 16 s en un estado roto permanente.
+  // Una sola vez: sin esta guarda sessionToIdle() se reintentaba en cada
+  // iteracion del loop --365 veces en una prueba--, con su setMotorSpeeds +
+  // lidar->stop + delay(200) cada vez. Eso degradaba el bucle de 56 a 265 ms y
+  // convertia un corte de 16 s en un estado roto permanente.
   static bool idle_attempted = false;
   if (session_state != SESSION_GRACE)
     idle_attempted = false;
@@ -796,8 +557,7 @@ void spinSession() {
   if (session_state == SESSION_GRACE && !idle_attempted &&
       millis() - session_grace_start_ms >= cfg.SESSION_GRACE_MS) {
     idle_attempted = true;
-    // Se agoto la espera sin que la Raspberry avisara nada: se asume fin de
-    // sesion no anunciado
+    // El agente no volvio dentro del plazo: se asume fin de sesion
     sessionToIdle("grace timeout");
   }
 }
@@ -830,20 +590,6 @@ void spinSessionLed() {
 }
 
 void loop() {
-  bool wifi_ok = spinWiFi();
-
-  // Coste de OTA en el bucle: se mide aparte para poder compararlo contra el
-  // baseline sin OTA y decidir si vale la pena dejarlo siempre activo
-  // Escuchar el socket de OTA. Medido en 91 us por llamada, pero como los
-  // otros sondeos UDP no hace falta en cada iteracion: una carga reintenta la
-  // invitacion, asi que 50 ms no la impiden.
-  {
-    static unsigned long last_ota_ms = 0;
-    if (g_ota_active || millis() - last_ota_ms >= 50) {
-      last_ota_ms = millis();
-      ArduinoOTA.handle();
-    }
-  }
   lidar->loop();
 
   // En IDLE no hay agente ni entidades micro-ROS creadas: llamar al executor
@@ -851,8 +597,8 @@ void loop() {
   if (session_state != SESSION_IDLE) {
     rcl_ret_t ret = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
     if (ret != RCL_RET_OK) {
-      Serial.print("rclc_executor_spin_some() error ");
-      Serial.println(ret);
+      DEBUG_PRINT("rclc_executor_spin_some() error ");
+      DEBUG_PRINTLN(ret);
     }
 
     updateROSParams();
@@ -862,16 +608,13 @@ void loop() {
     spinControlStatus();
     spinPing();
   }
-  // Estos tres sondean sockets UDP; hacerlo en cada iteracion le quitaba
-  // tiempo al drenado del UART del LiDAR. Ver el limitador dentro de cada uno.
   spinSession();
   spinSessionLed();
-  // diagSpin() incluye el watchdog de RX, que daba falsos positivos: su
-  // testigo se alimenta sobre todo de la respuesta del ping (1 Hz) y
-  // envejecia con la red sana. Se conserva el reporte por UDP, que es pasivo.
-  diagSpin();
 
-  if (!wifi_ok) {
+  // Antes este freno lo disparaba la caida del WiFi. Sobre serial el
+  // equivalente es haber perdido al agente: en GRACE e IDLE no hay quien
+  // mande cmd_vel, asi que dejar los motores girando seria peligroso.
+  if (session_state != SESSION_ACTIVE) {
     setMotorSpeeds(0, 0);
   } else if (last_cmd_vel_us > 0 &&
              (esp_timer_get_time() - last_cmd_vel_us) > (int64_t)cfg.cmd_vel_timeout_us) {
@@ -890,13 +633,11 @@ void loop() {
   }
   motorLeft.update();
   motorRight.update();
-
-  diagLoopTick();
 }
 
 bool isBootButtonPressed(uint8_t sec) {
   if (digiRead(cfg.button_boot_gpio, cfg.button_boot_invert))
-    Serial.println("BOOT button pressed. Keep pressing for web config.");
+    DEBUG_PRINTLN("BOOT button pressed. Keep pressing for web config.");
   else
     return false;
 
@@ -956,9 +697,9 @@ void spinIMU(int64_t time_now_us) {
 
   rcl_ret_t rc = rcl_publish(&imu_pub, &imu_msg, NULL);
   if (rc != RCL_RET_OK) {
-    Serial.print("rcl_publish(imu_msg");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("rcl_publish(imu_msg");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
   }
 
   imu_last_pub_us = time_now_us;
@@ -981,13 +722,13 @@ void error_loop(int n_blinks){
   //char buffer[40];
   //sprintf(buffer, "Blinking error %d", n_blinks);  
   //logMsg(buffer, rcl_interfaces__msg__Log__FATAL);
-  Serial.print("Blinking LED ");
-  Serial.print(n_blinks);
-  Serial.println(" times...");
+  DEBUG_PRINT("Blinking LED ");
+  DEBUG_PRINT(n_blinks);
+  DEBUG_PRINTLN(" times...");
 
   blink_error_code(n_blinks);
 
-  Serial.println("Rebooting...");
+  DEBUG_PRINTLN("Rebooting...");
   Serial.flush();
 
   ESP.restart();
@@ -1001,10 +742,6 @@ void setup() {
 
   bool spiffs_ok = SPIFFS.begin(true);
 //  blink_error_code(cfg.ERR_SPIFFS_INIT);
-  bool html_exists = false;
-  if (spiffs_ok)
-    html_exists = SPIFFS.exists(cfg.INDEX_HTML_PATH);
-
   bool wifi_yaml_exists = SPIFFS.exists(cfg.NETWORK_YAML_PATH);
   String wifi_yaml_err;
   if (wifi_yaml_exists)
@@ -1015,52 +752,49 @@ void setup() {
   if (config_yaml_exists)
     config_yaml_err = cfg.load(cfg.CONFIG_YAML_PATH);
 
-  Serial.begin(cfg.MONITOR_BAUD);
+  // El UART lo abre el transporte micro-ROS en set_microros_transports(), a
+  // 921600. Abrirlo aqui a 115200 dejaba al agente hablando a otra velocidad.
   setPinDrive(cfg.monitor_gpio_tx);
-  while(!Serial)
-    delay(0);
 
   // Antes que nada: el motivo del reset anterior. Distingue un ESP.restart()
   // del propio codigo de un watchdog, un panic o un brownout, que es lo unico
   // que no se puede deducir desde la Raspberry.
   g_rst_reason = esp_reset_reason();
 
-  Serial.println();
-  Serial.print("kalman.ai firmware version ");
-  Serial.println(cfg.FW_VERSION);
+  DEBUG_PRINTLN();
+  DEBUG_PRINT("kalman.ai firmware version ");
+  DEBUG_PRINTLN(cfg.FW_VERSION);
 
-  Serial.print("ESP IDF version ");
-  Serial.println(esp_get_idf_version());
+  DEBUG_PRINT("ESP IDF version ");
+  DEBUG_PRINTLN(esp_get_idf_version());
 
   if (spiffs_ok) {
-    Serial.println("SPIFFS mounted successfully");
-    if (!html_exists) {
-      Serial.println("Sketch data not found. Please upload sketch data.");
-      idle();
-    }
+    DEBUG_PRINTLN("SPIFFS mounted successfully");
+    // Antes se exigia el HTML del portal de configuracion. Ese portal ya no
+    // existe: SPIFFS solo hace falta para los .yaml.
   } else {
-    Serial.println("Error mounting SPIFFS");
+    DEBUG_PRINTLN("Error mounting SPIFFS");
     idle();
   }
 
   if (wifi_yaml_exists) {
-    Serial.print(cfg.NETWORK_YAML_PATH);
-    Serial.print(" found; ");
+    DEBUG_PRINT(cfg.NETWORK_YAML_PATH);
+    DEBUG_PRINT(" found; ");
     if (wifi_yaml_err.length() != 0) {
-      Serial.print("error parsing: ");
-      Serial.println(wifi_yaml_err);
+      DEBUG_PRINT("error parsing: ");
+      DEBUG_PRINTLN(wifi_yaml_err);
     } else
-      Serial.println("loaded OK");
+      DEBUG_PRINTLN("loaded OK");
   }
 
   if (config_yaml_exists) {
-    Serial.print(cfg.CONFIG_YAML_PATH);
-    Serial.print(" found; ");
+    DEBUG_PRINT(cfg.CONFIG_YAML_PATH);
+    DEBUG_PRINT(" found; ");
     if (config_yaml_err.length() != 0) {
-      Serial.print("error parsing: ");
-      Serial.println(config_yaml_err);
+      DEBUG_PRINT("error parsing: ");
+      DEBUG_PRINTLN(config_yaml_err);
     } else
-      Serial.println("loaded OK");
+      DEBUG_PRINTLN("loaded OK");
   }
 
   setPinMode(cfg.led_sys_gpio, OUTPUT);
@@ -1068,69 +802,20 @@ void setup() {
 
   setPinMode(cfg.button_boot_gpio, INPUT);
 
-  bool launch_web_config = false;
+  // El portal de configuracion web solo existia para introducir credenciales
+  // WiFi y la IP del agente. Sobre serial no hay nada que configurar por red:
+  // el agente esta al otro lado del cable.
 
-  if (cfg.use_web) {
-    Serial.println("Web configuration mode enabled (robot.use_web: true)");    
-    // Load network.yaml if it exists (for backward compatibility)
-    if (wifi_yaml_exists && wifi_yaml_err.length() == 0) {
-      Serial.println("Using WiFi credentials from network.yaml");
-    } else {
-      if (cfg.ssid.length() == 0) {
-        Serial.println("WiFi SSID unknown");
-        launch_web_config = true;
-      }
-      if (cfg.dest_ip.length() == 0) {
-        Serial.println("dest_ip unknown");
-        launch_web_config = true;
-      }
-    }
-    Serial.println("To enter web config push-and-release RST, "
-      "then push-and-hold BOOT within 1 sec");
-    delay(1000);
-    launch_web_config |= isBootButtonPressed(cfg.RESET_SETTINGS_HOLD_SEC);
-  } 
-  else {
-    // NEW: Direct configuration mode - bypass web config
-    Serial.println("Web configuration disabled (robot.use_web: false)");
-    Serial.println("Using WiFi and micro-ROS settings from config.yaml");    
-    if (cfg.ssid.length() == 0) {
-      Serial.println("ERROR: WiFi SSID not configured in config.yaml");
-      Serial.println("Please set robot.wifi.ssid in config.yaml");
-      idle();
-    }
-    if (cfg.dest_ip.length() == 0) {
-      Serial.println("ERROR: micro-ROS agent IP not configured in config.yaml");
-      Serial.println("Please set robot.computer.ip in config.yaml");
-      idle();
-    }
-    Serial.print("WiFi SSID: ");
-    Serial.println(cfg.ssid);
-    Serial.print("micro-ROS agent: ");
-    Serial.print(cfg.dest_ip);
-    Serial.print(":");
-    Serial.println(cfg.dest_port);    
-    launch_web_config = false; // Force bypass web config
-  }
-
-  if (launch_web_config) {
-    digiWrite(cfg.led_sys_gpio, HIGH, cfg.led_sys_invert);
-
-    AP ap;
-    ap.obtainConfig(cfg.robot_web.c_str(), set_param_callback);
-    return;
-  }
-
-  Serial.print("Board model ");
-  Serial.print(cfg.board_model);
-  Serial.print(", version ");
-  Serial.print(cfg.board_version);
-  Serial.print(", manufacturer ");
-  Serial.println(cfg.board_manufacturer);
-  Serial.print("Robot name ");
-  Serial.print(cfg.robot_name);
-  Serial.print(", web ");
-  Serial.println(cfg.robot_web);  
+  DEBUG_PRINT("Board model ");
+  DEBUG_PRINT(cfg.board_model);
+  DEBUG_PRINT(", version ");
+  DEBUG_PRINT(cfg.board_version);
+  DEBUG_PRINT(", manufacturer ");
+  DEBUG_PRINTLN(cfg.board_manufacturer);
+  DEBUG_PRINT("Robot name ");
+  DEBUG_PRINT(cfg.robot_name);
+  DEBUG_PRINT(", web ");
+  DEBUG_PRINTLN(cfg.robot_web);  
   cfg.board_manufacturer = ""; // free up a little memory
   cfg.board_model = "";
   cfg.board_version = "";
@@ -1148,75 +833,59 @@ void setup() {
   // El LED RGB solo esta disponible hasta imu.begin(): comparten el GPIO 48
   rgb_led.begin();
 
-  // Azul parpadeante en el primer intento, violeta a partir del segundo, para
-  // distinguir "conectando" de "reintentando tras un timeout"
-  uint8_t wifi_attempt = 0;
-  while(!initWiFi(cfg.ssid, cfg.pass,
-    wifi_attempt == 0 ? BOOT_WIFI_CONNECTING : BOOT_WIFI_RETRY)) {
-    wifi_attempt++;
-    setBootState(BOOT_WIFI_RETRY);
+  // Transporte serial: el agente esta al otro lado del mismo cable por el que
+  // se programa la placa. No hay red que levantar ni IP que resolver, asi que
+  // el arranque ya no depende de nada externo salvo del propio agente.
+  setBootState(BOOT_AGENT_SEARCHING);
+  set_microros_transports();
+
+  // Con WiFi el robot arrancaba en IDLE y esperaba un SESSION_START por UDP,
+  // porque el agente vivia en un contenedor que podia aparecer horas despues.
+  // Sobre serial se espera al agente aqui mismo: sondear es barato y no hay
+  // ambiguidad posible --si responde, hay sesion--. Se espera indefinidamente
+  // en vez de reiniciar: un reinicio no acerca la aparicion del agente y
+  // ademas pierde el motivo del reset anterior, que es lo que se diagnostica.
+  uint32_t agent_wait_attempts = 0;
+  while (rmw_uros_ping_agent(cfg.UROS_PING_TIMEOUT_MS, 1) != RMW_RET_OK) {
+    agent_wait_attempts++;
+    setBootState((agent_wait_attempts & 1) ?
+      BOOT_AGENT_SEARCHING : BOOT_WIFI_RETRY);
     delay(500);
   }
 
-  // Canal de sesion con la Raspberry y OTA: siempre activos, tambien en IDLE.
-  // Son la unica via para que el robot se entere de que empieza una sesion.
-  session_link.begin(cfg.SESSION_UDP_PORT);
-  diagBegin();
-  setupOTA();
+  setupMicroROS(&twist_sub_callback);
+  session_state = SESSION_ACTIVE;
 
-  // El agente micro-ROS solo existe mientras hay sesion, y esta puede empezar
-  // horas despues del arranque. Sin este condicional el ESP32 buscaba al
-  // agente de entrada y se reiniciaba cada 60 s hasta que apareciera.
-  if (sessionWantsConnect()) {
-    // Se consume la intencion: si este arranque falla, el siguiente vuelve a
-    // IDLE en vez de quedar en un ciclo de reinicios
-    sessionSetWantConnect(false);
-
-    setBootState(BOOT_AGENT_SEARCHING);
-    set_microros_wifi_transports(cfg.dest_ip.c_str(), cfg.dest_port);
-    delay(100); // asentar el socket UDP; si no basta, setupMicroROS() reintenta
-
-    setupMicroROS(&twist_sub_callback);
-    session_state = SESSION_ACTIVE;
-
-    // Verde fijo: agente conectado
-    setBootState(BOOT_READY);
-    delay(200);
-
-    // Cierra el lazo con la Raspberry: el ACK de SESSION_START solo confirmo
-    // la recepcion, este anuncio confirma que la sesion quedo operativa
-    session_link.announce("SESSION_READY", SESSION_ACTIVE);
-  } else {
-    session_state = SESSION_IDLE;
-    Serial.println("Sin sesion: esperando SESSION_START de la Raspberry");
-  }
+  // Verde fijo: agente conectado
+  setBootState(BOOT_READY);
+  delay(200);
 
   // Apagar RGB — liberar GPIO 48 para el IMU
   rgb_led.turnOff();
 
   // Iniciar IMU ahora que el RGB está apagado
   if (!imu.begin(48, 47, 400000)) {
-    Serial.println("Error initializing IMU6500");
+    DEBUG_PRINTLN("Error initializing IMU6500");
   } else {
-    Serial.println("IMU6500 initialized successfully");
+    DEBUG_PRINTLN("IMU6500 initialized successfully");
   }
 
   //pubDiagnostics();
 
   rcl_ret_t rc = addROSParams();
   if (rc != RCL_RET_OK) {
-    Serial.print("addROSParams(");
-    Serial.print(") error ");
-    Serial.println(rc);
+    DEBUG_PRINT("addROSParams(");
+    DEBUG_PRINT(") error ");
+    DEBUG_PRINTLN(rc);
   }
 
   ros_config_params_changed = true;
   updateROSParams();
-  Serial.println("Micro-ROS initialized");
+  DEBUG_PRINTLN("Micro-ROS initialized");
   cfg.robot_name = ""; // free up a little memory
   cfg.robot_web = ""; 
-  //Serial.print("Diagnostics pub ");
-  //Serial.println(pubDiagnostics() ? "OK" : "FAILED");
+  //DEBUG_PRINT("Diagnostics pub ");
+  //DEBUG_PRINTLN(pubDiagnostics() ? "OK" : "FAILED");
   //pubDiagnostics();
   
   resetTelemMsg();
@@ -1227,7 +896,7 @@ void setup() {
   if (session_state == SESSION_ACTIVE)
     startLIDAR();
   else
-    Serial.println("LiDAR en espera (sin sesion activa)");
+    DEBUG_PRINTLN("LiDAR en espera (sin sesion activa)");
     //blink_error_code(cfg.ERR_LIDAR_START);
     //error_loop(cfg.ERR_LIDAR_START);
 }
