@@ -754,6 +754,9 @@ void setup() {
 
   // El UART lo abre el transporte micro-ROS en set_microros_transports(), a
   // 921600. Abrirlo aqui a 115200 dejaba al agente hablando a otra velocidad.
+  // Los logs van por el otro puerto USB (ver include/debug_log.h); sin
+  // -DKALMAN_DEBUG_SERIAL esto no compila a nada.
+  DEBUG_BEGIN();
   setPinDrive(cfg.monitor_gpio_tx);
 
   // Antes que nada: el motivo del reset anterior. Distingue un ESP.restart()
